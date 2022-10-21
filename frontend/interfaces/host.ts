@@ -56,12 +56,13 @@ export default PropTypes.shape({
   packs: PropTypes.arrayOf(packInterface),
   software: PropTypes.arrayOf(softwareInterface),
   status: PropTypes.string,
-  display_text: PropTypes.string,
+  display_name: PropTypes.string,
   users: PropTypes.arrayOf(hostUserInterface),
   policies: PropTypes.arrayOf(hostPolicyInterface),
   query_results: PropTypes.arrayOf(hostQueryResult),
 });
 
+export type HostStatus = "online" | "offline" | "new" | "missing";
 export interface IDeviceUser {
   email: string;
   source: string;
@@ -80,10 +81,18 @@ export interface IMDMData {
   server_url: string;
 }
 
+export interface IMunkiIssue {
+  id: number;
+  name: string;
+  type: "error" | "warning";
+  created_at: string;
+}
+
 export interface IMacadminsResponse {
   macadmins: null | {
     munki: null | IMunkiData;
     mobile_device_management: null | IMDMData;
+    munki_issues: IMunkiIssue[];
   };
 }
 
@@ -96,7 +105,7 @@ export interface IPackStats {
 
 export interface IHostPolicyQuery {
   id: number;
-  hostname: string;
+  display_name: string;
   query_results?: unknown[];
   status?: string;
 }
@@ -157,8 +166,9 @@ export interface IHost {
     total_issues_count: number;
     failing_policies_count: number;
   };
-  status: string;
+  status: HostStatus;
   display_text: string;
+  display_name: string;
   target_type?: string;
   users: IHostUser[];
   device_users?: IDeviceUser[];

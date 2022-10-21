@@ -65,7 +65,7 @@ func (t Team) MarshalJSON() ([]byte, error) {
 		UserCount   int             `json:"user_count"`
 		Users       []TeamUser      `json:"users,omitempty"`
 		HostCount   int             `json:"host_count"`
-		Hosts       []Host          `json:"hosts,omitempty"`
+		Hosts       []HostResponse  `json:"hosts,omitempty"`
 		Secrets     []*EnrollSecret `json:"secrets,omitempty"`
 	}{
 		ID:          t.ID,
@@ -76,7 +76,7 @@ func (t Team) MarshalJSON() ([]byte, error) {
 		UserCount:   t.UserCount,
 		Users:       t.Users,
 		HostCount:   t.HostCount,
-		Hosts:       t.Hosts,
+		Hosts:       HostResponsesForHostsCheap(t.Hosts),
 		Secrets:     t.Secrets,
 	}
 
@@ -122,6 +122,7 @@ type TeamConfig struct {
 	AgentOptions    *json.RawMessage    `json:"agent_options,omitempty"`
 	WebhookSettings TeamWebhookSettings `json:"webhook_settings"`
 	Integrations    TeamIntegrations    `json:"integrations"`
+	Features        Features            `json:"features"`
 }
 
 type TeamWebhookSettings struct {
@@ -252,4 +253,5 @@ type TeamSpec struct {
 	Name         string           `json:"name"`
 	AgentOptions *json.RawMessage `json:"agent_options"`
 	Secrets      []EnrollSecret   `json:"secrets"`
+	Features     *json.RawMessage `json:"features"`
 }

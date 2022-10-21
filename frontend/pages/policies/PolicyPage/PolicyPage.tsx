@@ -5,7 +5,8 @@ import { useErrorHandler } from "react-error-boundary";
 
 import { AppContext } from "context/app";
 import { PolicyContext } from "context/policy";
-import { QUERIES_PAGE_STEPS, DEFAULT_POLICY } from "utilities/constants";
+import { QUERIES_PAGE_STEPS } from "utilities/constants";
+import { DEFAULT_POLICY } from "pages/policies/constants";
 import globalPoliciesAPI from "services/entities/global_policies";
 import teamPoliciesAPI from "services/entities/team_policies";
 import hostAPI from "services/entities/hosts";
@@ -22,7 +23,7 @@ import SelectTargets from "components/LiveQuery/SelectTargets";
 import MainContent from "components/MainContent";
 import SidePanelContent from "components/SidePanelContent";
 import RunQuery from "pages/policies/PolicyPage/screens/RunQuery";
-import ExternalURLIcon from "../../../../assets/images/icon-external-url-12x12@2x.png";
+import ExternalLinkIcon from "../../../../assets/images/icon-external-link-12x12@2x.png";
 
 interface IPolicyPageProps {
   router: InjectedRouter;
@@ -91,18 +92,17 @@ const PolicyPage = ({
     }
   }
 
-  const [step, setStep] = useState<string>(QUERIES_PAGE_STEPS[1]);
+  const [step, setStep] = useState(QUERIES_PAGE_STEPS[1]);
   const [selectedTargets, setSelectedTargets] = useState<ITarget[]>([]);
   const [targetedHosts, setTargetedHosts] = useState<IHost[]>([]);
   const [targetedLabels, setTargetedLabels] = useState<ILabel[]>([]);
   const [targetedTeams, setTargetedTeams] = useState<ITeam[]>([]);
-  const [targetsTotalCount, setTargetsTotalCount] = useState<number>(0);
-  const [isLiveQueryRunnable, setIsLiveQueryRunnable] = useState<boolean>(true);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
-  const [
-    showOpenSchemaActionText,
-    setShowOpenSchemaActionText,
-  ] = useState<boolean>(false);
+  const [targetsTotalCount, setTargetsTotalCount] = useState(0);
+  const [isLiveQueryRunnable, setIsLiveQueryRunnable] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showOpenSchemaActionText, setShowOpenSchemaActionText] = useState(
+    false
+  );
 
   const {
     isLoading: isStoredPolicyLoading,
@@ -199,7 +199,8 @@ const PolicyPage = ({
               rel="noopener noreferrer"
               href="https://github.com/fleetdm/fleet/issues/new/choose"
             >
-              file an issue <img alt="" src={ExternalURLIcon} />
+              file an issue
+              <img src={ExternalLinkIcon} alt="Open external link" />
             </a>
           </p>
         </div>

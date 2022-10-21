@@ -10,12 +10,12 @@ import ForgotPasswordForm from "components/forms/ForgotPasswordForm";
 import StackedWhiteBoxes from "components/StackedWhiteBoxes";
 import AuthenticationFormWrapper from "components/AuthenticationFormWrapper";
 import Spinner from "components/Spinner";
-import ExternalURLIcon from "../../../assets/images/icon-external-url-12x12@2x.png";
+import ExternalLinkIcon from "../../../assets/images/icon-external-link-12x12@2x.png";
 
 const ForgotPasswordPage = () => {
-  const [email, setEmail] = useState<string>("");
+  const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   const baseClass = "forgot-password";
 
@@ -58,14 +58,11 @@ const ForgotPasswordPage = () => {
               href="https://fleetdm.com/docs/using-fleet/fleetctl-cli#using-fleetctl-with-an-api-only-user?utm_medium=fleetui&utm_campaign=get-api-token"
               target="_blank"
               rel="noopener noreferrer"
+              className="external-link"
             >
               Password reset FAQ
+              <img src={ExternalLinkIcon} alt="Open external link" />
             </a>
-            <img
-              alt="external link icon"
-              className="icon-external"
-              src={ExternalURLIcon}
-            />
           </p>
         </div>
       );

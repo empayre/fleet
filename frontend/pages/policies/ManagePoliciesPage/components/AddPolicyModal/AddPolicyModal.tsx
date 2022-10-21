@@ -2,7 +2,7 @@ import React, { useCallback, useContext } from "react";
 import PATHS from "router/paths";
 import { InjectedRouter } from "react-router/lib/Router";
 
-import { DEFAULT_POLICY, DEFAULT_POLICIES } from "utilities/constants";
+import { DEFAULT_POLICY, DEFAULT_POLICIES } from "pages/policies/constants";
 
 import { IPolicyNew } from "interfaces/policy";
 
@@ -72,18 +72,10 @@ const AddPolicyModal = ({
   });
 
   return (
-    <Modal
-      title="Add a policy"
-      onExit={onCancel}
-      className={`${baseClass}__modal`}
-    >
+    <Modal title="Add a policy" onExit={onCancel} className={baseClass}>
       <>
         Choose a policy template to get started or{" "}
-        <Button
-          variant="unstyled"
-          onClick={onCreateYourOwnPolicyClick}
-          className={`${baseClass}__back-link`}
-        >
+        <Button variant="text-link" onClick={onCreateYourOwnPolicyClick}>
           create your own policy
         </Button>
         .

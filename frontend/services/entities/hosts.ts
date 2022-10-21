@@ -1,8 +1,12 @@
 /* eslint-disable  @typescript-eslint/explicit-module-boundary-types */
 import sendRequest from "services";
 import endpoints from "utilities/endpoints";
-import { IHost } from "interfaces/host";
-import { buildQueryStringFromParams } from "utilities/url";
+import { IHost, HostStatus } from "interfaces/host";
+import {
+  buildQueryStringFromParams,
+  getLabelParam,
+  reconcileMutuallyExclusiveHostParams,
+} from "utilities/url";
 
 export interface ISortOption {
   key: string;
@@ -19,9 +23,14 @@ export interface ILoadHostsOptions {
   policyId?: number;
   policyResponse?: string;
   softwareId?: number;
+  status?: HostStatus;
   mdmId?: number;
   mdmEnrollmentStatus?: string;
-  operatingSystemId?: number;
+  lowDiskSpaceHosts?: number;
+  osId?: number;
+  osName?: string;
+  osVersion?: string;
+  munkiIssueId?: number;
   device_mapping?: boolean;
   columns?: string;
   visibleColumns?: string;
@@ -37,12 +46,24 @@ export interface IExportHostsOptions {
   policyId?: number;
   policyResponse?: string;
   softwareId?: number;
+  status?: HostStatus;
   mdmId?: number;
+  munkiIssueId?: number;
   mdmEnrollmentStatus?: string;
-  operatingSystemId?: number;
+  lowDiskSpaceHosts?: number;
+  osId?: number;
+  osName?: string;
+  osVersion?: string;
   device_mapping?: boolean;
   columns?: string;
   visibleColumns?: string;
+}
+
+export interface IActionByFilter {
+  teamId: number | null;
+  query: string;
+  status: string;
+  labelId?: number;
 }
 
 export type ILoadHostDetailsExtension = "device_mapping" | "macadmins";
@@ -56,7 +77,7 @@ const getLabel = (selectedLabels?: string[]) => {
 
 const getHostEndpoint = (selectedLabels?: string[]) => {
   const { HOSTS, LABEL_HOSTS } = endpoints;
-  if (selectedLabels === undefined) return endpoints.HOSTS;
+  if (selectedLabels === undefined) return HOSTS;
 
   const label = getLabel(selectedLabels);
   if (label) {
@@ -79,78 +100,6 @@ const getSortParams = (sortOptions?: ISortOption[]) => {
   };
 };
 
-const getStatusParam = (selectedLabels?: string[]) => {
-  if (selectedLabels === undefined) return undefined;
-
-  const status = selectedLabels.find((f) => !f.includes(LABEL_PREFIX));
-  if (status === undefined) return undefined;
-
-  const statusFilterList = ["new", "online", "offline"];
-  return statusFilterList.includes(status) ? status : undefined;
-};
-
-const getPolicyParams = (
-  label?: string,
-  policyId?: number,
-  policyResponse?: string
-) => {
-  if (label !== undefined || policyId === undefined) return {};
-
-  return {
-    policy_id: policyId,
-    policy_response: policyResponse,
-  };
-};
-
-const getSoftwareParam = (
-  label?: string,
-  policyId?: number,
-  softwareId?: number,
-  mdmId?: number,
-  mdmEnrollmentStatus?: string
-) => {
-  return !label && !policyId && !mdmId && !mdmEnrollmentStatus
-    ? softwareId
-    : undefined;
-};
-
-const getMDMSolutionParam = (
-  label?: string,
-  policyId?: number,
-  softwareId?: number,
-  mdmId?: number,
-  mdmEnrollmentStatus?: string
-) => {
-  return !label && !policyId && !softwareId && !mdmEnrollmentStatus
-    ? mdmId
-    : undefined;
-};
-
-const getMDMEnrollmentStatusParam = (
-  label?: string,
-  policyId?: number,
-  softwareId?: number,
-  mdmId?: number,
-  mdmEnrollmentStatus?: string
-) => {
-  return !label && !policyId && !softwareId && !mdmId
-    ? mdmEnrollmentStatus
-    : undefined;
-};
-
-const getOperatingSystemParam = (
-  label?: string,
-  policyId?: number,
-  softwareId?: number,
-  operatingSystemId?: number
-) => {
-  return label === undefined &&
-    policyId === undefined &&
-    softwareId === undefined
-    ? operatingSystemId
-    : undefined;
-};
-
 export default {
   destroy: (host: IHost) => {
     const { HOSTS } = endpoints;
@@ -163,12 +112,7 @@ export default {
 
     return sendRequest("POST", HOSTS_DELETE, { ids: hostIds });
   },
-  destroyByFilter: (
-    teamId: number | null,
-    query: string,
-    status: string,
-    labelId: number | null
-  ) => {
+  destroyByFilter: ({ teamId, query, status, labelId }: IActionByFilter) => {
     const { HOSTS_DELETE } = endpoints;
     return sendRequest("POST", HOSTS_DELETE, {
       filters: {
@@ -180,74 +124,49 @@ export default {
     });
   },
   exportHosts: (options: IExportHostsOptions) => {
-    const { HOSTS_REPORT } = endpoints;
     const sortBy = options.sortBy;
     const selectedLabels = options?.selectedLabels || [];
     const globalFilter = options?.globalFilter || "";
-    const teamId = options?.teamId || null;
-    const policyId = options?.policyId || null;
+    const teamId = options?.teamId;
+    const policyId = options?.policyId;
     const policyResponse = options?.policyResponse || "passing";
-    const softwareId = options?.softwareId || null;
-    const mdmId = options?.mdmId || null;
-    const mdmEnrollmentStatus = options?.mdmEnrollmentStatus || null;
-    const visibleColumns = options?.visibleColumns || null;
+    const softwareId = options?.softwareId;
+    const status = options?.status;
+    const mdmId = options?.mdmId;
+    const mdmEnrollmentStatus = options?.mdmEnrollmentStatus;
+    const lowDiskSpaceHosts = options?.lowDiskSpaceHosts;
+    const visibleColumns = options?.visibleColumns;
+    const label = getLabelParam(selectedLabels);
+    const munkiIssueId = options?.munkiIssueId;
 
     if (!sortBy.length) {
       throw Error("sortBy is a required field.");
     }
 
-    const orderKeyParam = `?order_key=${sortBy[0].key}`;
-    const orderDirection = `&order_direction=${sortBy[0].direction}`;
+    const queryParams = {
+      order_key: sortBy[0].key,
+      order_direction: sortBy[0].direction,
+      query: globalFilter,
+      team_id: teamId,
+      ...reconcileMutuallyExclusiveHostParams({
+        label,
+        policyId,
+        policyResponse,
+        mdmId,
+        mdmEnrollmentStatus,
+        munkiIssueId,
+        softwareId,
+        lowDiskSpaceHosts,
+      }),
+      status,
+      label_id: label,
+      columns: visibleColumns,
+      format: "csv",
+    };
 
-    let path = `${HOSTS_REPORT}${orderKeyParam}${orderDirection}`;
-
-    if (globalFilter !== "") {
-      path += `&query=${globalFilter}`;
-    }
-    const labelPrefix = "labels/";
-
-    // Handle multiple filters
-    const label = selectedLabels.find((f) => f.includes(labelPrefix)) || "";
-    const status = selectedLabels.find((f) => !f.includes(labelPrefix)) || "";
-    const statusFilterList = ["new", "online", "offline"];
-    const isStatusFilter = statusFilterList.includes(status);
-
-    if (isStatusFilter) {
-      path += `&status=${status}`;
-    }
-
-    if (teamId) {
-      path += `&team_id=${teamId}`;
-    }
-
-    // label OR policy_id OR software_id OR mdm_id OR mdm_enrollment_status are valid filters.
-    if (label) {
-      const lid = label.substr(labelPrefix.length);
-      path += `&label_id=${parseInt(lid, 10)}`;
-    }
-
-    if (!label && policyId) {
-      path += `&policy_id=${policyId}`;
-      path += `&policy_response=${policyResponse}`;
-    }
-
-    if (!label && !policyId && !mdmId && !mdmEnrollmentStatus && softwareId) {
-      path += `&software_id=${softwareId}`;
-    }
-
-    if (!label && !policyId && !softwareId && !mdmEnrollmentStatus && mdmId) {
-      path += `&mdm_id=${mdmId}`;
-    }
-
-    if (!label && !policyId && !softwareId && !mdmId && mdmEnrollmentStatus) {
-      path += `&mdm_enrollment_status=${mdmEnrollmentStatus}`;
-    }
-
-    if (visibleColumns) {
-      path += `&columns=${visibleColumns}`;
-    }
-
-    path += "&format=csv";
+    const queryString = buildQueryStringFromParams(queryParams);
+    const endpoint = endpoints.HOSTS_REPORT;
+    const path = `${endpoint}?${queryString}`;
 
     return sendRequest("GET", path);
   },
@@ -259,16 +178,20 @@ export default {
     policyId,
     policyResponse = "passing",
     softwareId,
+    status,
     mdmId,
     mdmEnrollmentStatus,
-    operatingSystemId,
+    munkiIssueId,
+    lowDiskSpaceHosts,
+    osId,
+    osName,
+    osVersion,
     device_mapping,
     selectedLabels,
     sortBy,
   }: ILoadHostsOptions) => {
     const label = getLabel(selectedLabels);
     const sortParams = getSortParams(sortBy);
-    const policyParams = getPolicyParams(label, policyId, policyResponse);
 
     const queryParams = {
       page,
@@ -278,31 +201,20 @@ export default {
       device_mapping,
       order_key: sortParams.order_key,
       order_direction: sortParams.order_direction,
-      policy_id: policyParams.policy_id,
-      policy_response: policyParams.policy_response,
-      software_id: getSoftwareParam(label, policyId, softwareId),
-      mdm_id: getMDMSolutionParam(
+      status,
+      ...reconcileMutuallyExclusiveHostParams({
         label,
         policyId,
-        softwareId,
+        policyResponse,
         mdmId,
-        mdmEnrollmentStatus
-      ),
-      mdm_enrollment_status: getMDMEnrollmentStatusParam(
-        label,
-        policyId,
+        mdmEnrollmentStatus,
+        munkiIssueId,
         softwareId,
-        mdmId,
-        mdmEnrollmentStatus
-      ),
-      operating_system_id: getOperatingSystemParam(
-        label,
-        policyId,
-        softwareId,
-        operatingSystemId
-      ),
-
-      status: getStatusParam(selectedLabels),
+        lowDiskSpaceHosts,
+        osId,
+        osName,
+        osVersion,
+      }),
     };
 
     const queryString = buildQueryStringFromParams(queryParams);
@@ -348,12 +260,12 @@ export default {
   },
 
   // TODO confirm interplay with policies
-  transferToTeamByFilter: (
-    teamId: number | null,
-    query: string,
-    status: string,
-    labelId: number | null
-  ) => {
+  transferToTeamByFilter: ({
+    teamId,
+    query,
+    status,
+    labelId,
+  }: IActionByFilter) => {
     const { HOSTS_TRANSFER_BY_FILTER } = endpoints;
     return sendRequest("POST", HOSTS_TRANSFER_BY_FILTER, {
       team_id: teamId,

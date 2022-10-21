@@ -62,7 +62,7 @@ const condenseVulnerabilities = (
     : condensed;
 };
 
-const withBundleTooltip = (name: string, bundle: string) => (
+const renderBundleTooltip = (name: string, bundle: string) => (
   <span className="name-container">
     <TooltipWrapper
       tipContent={`
@@ -86,7 +86,6 @@ const getMaxProbability = (vulns: IVulnerability[]) =>
 
 const generateEPSSColumnHeader = () => {
   return {
-    title: "Probability of exploit",
     Header: (headerProps: IHeaderProps): JSX.Element => {
       const titleWithToolTip = (
         <TooltipWrapper
@@ -190,10 +189,11 @@ const generateTableHeaders = (isPremiumTier?: boolean): Column[] => {
         const { id, name, bundle_identifier: bundle } = cellProps.row.original;
         return (
           <Link to={`${PATHS.SOFTWARE_DETAILS(id.toString())}`}>
-            {bundle ? withBundleTooltip(name, bundle) : name}
+            {bundle ? renderBundleTooltip(name, bundle) : name}
           </Link>
         );
       },
+      sortType: "caseInsensitive",
     },
     {
       title: "Version",

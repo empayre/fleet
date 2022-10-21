@@ -24,7 +24,7 @@ func TestDetailQueryNetworkInterfaces(t *testing.T) {
 	var initialHost fleet.Host
 	host := initialHost
 
-	ingest := GetDetailQueries(nil, config.FleetConfig{})["network_interface"].IngestFunc
+	ingest := GetDetailQueries(config.FleetConfig{}, nil)["network_interface"].IngestFunc
 
 	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, nil))
 	assert.Equal(t, initialHost, host)
@@ -118,7 +118,7 @@ func TestDetailQueryScheduledQueryStats(t *testing.T) {
 		return nil
 	}
 
-	ingest := GetDetailQueries(nil, config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}})["scheduled_query_stats"].DirectTaskIngestFunc
+	ingest := GetDetailQueries(config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}}, nil)["scheduled_query_stats"].DirectTaskIngestFunc
 
 	ctx := context.Background()
 	assert.NoError(t, ingest(ctx, log.NewNopLogger(), &host, task, nil, false))
@@ -296,11 +296,13 @@ func sortedKeysCompare(t *testing.T, m map[string]DetailQuery, expectedKeys []st
 }
 
 func TestGetDetailQueries(t *testing.T) {
-	queriesNoConfig := GetDetailQueries(nil, config.FleetConfig{})
-	require.Len(t, queriesNoConfig, 15)
+	queriesNoConfig := GetDetailQueries(config.FleetConfig{}, nil)
+	require.Len(t, queriesNoConfig, 17)
+
 	baseQueries := []string{
 		"network_interface",
 		"os_version",
+		"os_version_windows",
 		"osquery_flags",
 		"osquery_info",
 		"system_info",
@@ -310,28 +312,32 @@ func TestGetDetailQueries(t *testing.T) {
 		"mdm",
 		"munki_info",
 		"google_chrome_profiles",
-		"orbit_info",
 		"battery",
 		"os_windows",
 		"os_unix_like",
+		"windows_update_history",
+		"kubequery_info",
 	}
 	sortedKeysCompare(t, queriesNoConfig, baseQueries)
 
-	queriesWithUsers := GetDetailQueries(&fleet.AppConfig{HostSettings: fleet.HostSettings{EnableHostUsers: true}}, config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}})
-	require.Len(t, queriesWithUsers, 17)
+	queriesWithoutWinOSVuln := GetDetailQueries(config.FleetConfig{Vulnerabilities: config.VulnerabilitiesConfig{DisableWinOSVulnerabilities: true}}, nil)
+	require.Len(t, queriesWithoutWinOSVuln, 16)
+
+	queriesWithUsers := GetDetailQueries(config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}}, &fleet.Features{EnableHostUsers: true})
+	require.Len(t, queriesWithUsers, 19)
 	sortedKeysCompare(t, queriesWithUsers, append(baseQueries, "users", "scheduled_query_stats"))
 
-	queriesWithUsersAndSoftware := GetDetailQueries(&fleet.AppConfig{HostSettings: fleet.HostSettings{EnableHostUsers: true, EnableSoftwareInventory: true}}, config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}})
-	require.Len(t, queriesWithUsersAndSoftware, 20)
+	queriesWithUsersAndSoftware := GetDetailQueries(config.FleetConfig{App: config.AppConfig{EnableScheduledQueryStats: true}}, &fleet.Features{EnableHostUsers: true, EnableSoftwareInventory: true})
+	require.Len(t, queriesWithUsersAndSoftware, 22)
 	sortedKeysCompare(t, queriesWithUsersAndSoftware,
 		append(baseQueries, "users", "software_macos", "software_linux", "software_windows", "scheduled_query_stats"))
 }
 
-func TestDetailQueriesOSVersion(t *testing.T) {
+func TestDetailQueriesOSVersionUnixLike(t *testing.T) {
 	var initialHost fleet.Host
 	host := initialHost
 
-	ingest := GetDetailQueries(nil, config.FleetConfig{})["os_version"].IngestFunc
+	ingest := GetDetailQueries(config.FleetConfig{}, nil)["os_version"].IngestFunc
 
 	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, nil))
 	assert.Equal(t, initialHost, host)
@@ -379,7 +385,7 @@ func TestDetailQueriesOSVersion(t *testing.T) {
 	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, rows))
 	assert.Equal(t, "Arch Linux 1.2.3", host.OSVersion)
 
-	// Simulate Ubuntu host with incorrect `patch`` number
+	// Simulate Ubuntu host with incorrect `patch` number
 	require.NoError(t, json.Unmarshal([]byte(`
 [{
     "hostname": "kube2",
@@ -399,6 +405,61 @@ func TestDetailQueriesOSVersion(t *testing.T) {
 
 	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, rows))
 	assert.Equal(t, "Ubuntu 18.04.5 LTS", host.OSVersion)
+}
+
+func TestDetailQueriesOSVersionWindows(t *testing.T) {
+	var initialHost fleet.Host
+	host := initialHost
+
+	ingest := GetDetailQueries(config.FleetConfig{}, nil)["os_version_windows"].IngestFunc
+
+	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, nil))
+	assert.Equal(t, initialHost, host)
+
+	var rows []map[string]string
+	require.NoError(t, json.Unmarshal([]byte(`
+[{
+    "hostname": "WinBox",
+    "arch": "64-bit",
+    "build": "22000",
+    "codename": "Microsoft Windows 11 Enterprise",
+    "major": "10",
+    "minor": "0",
+    "name": "Microsoft Windows 11 Enterprise",
+    "patch": "",
+    "platform": "windows",
+    "platform_like": "windows",
+    "version": "10.0.22000",
+	"display_version": "21H2",
+	"release_id": ""
+}]`),
+		&rows,
+	))
+
+	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, rows))
+	assert.Equal(t, "Windows 11 Enterprise 21H2", host.OSVersion)
+
+	require.NoError(t, json.Unmarshal([]byte(`
+[{
+    "hostname": "WinBox",
+    "arch": "64-bit",
+    "build": "17763",
+    "codename": "Microsoft Windows 10 Enterprise LTSC",
+    "major": "10",
+    "minor": "0",
+    "name": "Microsoft Windows 10 Enterprise LTSC",
+    "patch": "",
+    "platform": "windows",
+    "platform_like": "windows",
+    "version": "10.0.17763",
+	"display_version": "",
+	"release_id": "1809"
+}]`),
+		&rows,
+	))
+
+	assert.NoError(t, ingest(context.Background(), log.NewNopLogger(), &host, rows))
+	assert.Equal(t, "Windows 10 Enterprise LTSC 1809", host.OSVersion)
 }
 
 func TestDirectIngestMDM(t *testing.T) {
@@ -425,26 +486,6 @@ func TestDirectIngestMDM(t *testing.T) {
 	}, false)
 	require.NoError(t, err)
 	require.True(t, ds.SetOrUpdateMDMDataFuncInvoked)
-}
-
-func TestDirectIngestOrbitInfo(t *testing.T) {
-	ds := new(mock.Store)
-	ds.SetOrUpdateDeviceAuthTokenFunc = func(ctx context.Context, hostID uint, authToken string) error {
-		require.Equal(t, hostID, uint(1))
-		require.Equal(t, authToken, "foo")
-		return nil
-	}
-
-	host := fleet.Host{
-		ID: 1,
-	}
-
-	err := directIngestOrbitInfo(context.Background(), log.NewNopLogger(), &host, ds, []map[string]string{{
-		"version":           "42",
-		"device_auth_token": "foo",
-	}}, true)
-	require.NoError(t, err)
-	require.True(t, ds.SetOrUpdateDeviceAuthTokenFuncInvoked)
 }
 
 func TestDirectIngestChromeProfiles(t *testing.T) {
@@ -497,28 +538,49 @@ func TestDirectIngestBattery(t *testing.T) {
 func TestDirectIngestOSWindows(t *testing.T) {
 	ds := new(mock.Store)
 
-	testHost := fleet.Host{
-		ID: 1,
-	}
-	testOS := fleet.OperatingSystem{
-		Name:          "Microsoft Windows 11 Enterprise",
-		Version:       "21H2",
-		Arch:          "64-bit",
-		KernelVersion: "10.0.22000.795",
+	testCases := []struct {
+		expected fleet.OperatingSystem
+		data     []map[string]string
+	}{
+		{
+			expected: fleet.OperatingSystem{
+				Name:          "Microsoft Windows 11 Enterprise",
+				Version:       "21H2",
+				Arch:          "64-bit",
+				KernelVersion: "10.0.22000.795",
+			},
+			data: []map[string]string{
+				{"name": "Microsoft Windows 11 Enterprise", "display_version": "21H2", "release_id": "", "arch": "64-bit", "kernel_version": "10.0.22000.795"},
+			},
+		},
+		{
+			expected: fleet.OperatingSystem{
+				Name:          "Microsoft Windows 10 Enterprise LTSC",
+				Version:       "1809",
+				Arch:          "64-bit",
+				KernelVersion: "10.0.17763",
+			},
+			data: []map[string]string{
+				{"name": "Microsoft Windows 10 Enterprise LTSC", "display_version": "", "release_id": "1809", "arch": "64-bit", "kernel_version": "10.0.17763"},
+			},
+		},
 	}
 
-	ds.UpdateHostOperatingSystemFunc = func(ctx context.Context, hostID uint, hostOS fleet.OperatingSystem) error {
-		require.Equal(t, testHost.ID, hostID)
-		require.Equal(t, testOS, hostOS)
-		return nil
+	host := fleet.Host{ID: 1}
+
+	for _, tt := range testCases {
+		ds.UpdateHostOperatingSystemFunc = func(ctx context.Context, hostID uint, hostOS fleet.OperatingSystem) error {
+			require.Equal(t, host.ID, hostID)
+			require.Equal(t, tt.expected, hostOS)
+			return nil
+		}
+
+		err := directIngestOSWindows(context.Background(), log.NewNopLogger(), &host, ds, tt.data, false)
+		require.NoError(t, err)
+
+		require.True(t, ds.UpdateHostOperatingSystemFuncInvoked)
+		ds.UpdateHostOperatingSystemFuncInvoked = false
 	}
-
-	err := directIngestOSWindows(context.Background(), log.NewNopLogger(), &testHost, ds, []map[string]string{
-		{"name": "Microsoft Windows 11 Enterprise", "version": "21H2", "arch": "64-bit", "kernel_version": "10.0.22000.795"},
-	}, false)
-
-	require.NoError(t, err)
-	require.True(t, ds.UpdateHostOperatingSystemFuncInvoked)
 }
 
 func TestDirectIngestOSUnixLike(t *testing.T) {
@@ -646,14 +708,121 @@ func TestDirectIngestOSUnixLike(t *testing.T) {
 }
 
 func TestDangerousReplaceQuery(t *testing.T) {
-	queries := GetDetailQueries(&fleet.AppConfig{HostSettings: fleet.HostSettings{EnableHostUsers: true}}, config.FleetConfig{})
+	queries := GetDetailQueries(config.FleetConfig{}, &fleet.Features{EnableHostUsers: true})
 	originalQuery := queries["users"].Query
 
 	t.Setenv("FLEET_DANGEROUS_REPLACE_USERS", "select * from blah")
-	queries = GetDetailQueries(&fleet.AppConfig{HostSettings: fleet.HostSettings{EnableHostUsers: true}}, config.FleetConfig{})
+	queries = GetDetailQueries(config.FleetConfig{}, &fleet.Features{EnableHostUsers: true})
 	assert.NotEqual(t, originalQuery, queries["users"].Query)
 
 	require.NoError(t, os.Unsetenv("FLEET_DANGEROUS_REPLACE_USERS"))
-	queries = GetDetailQueries(&fleet.AppConfig{HostSettings: fleet.HostSettings{EnableHostUsers: true}}, config.FleetConfig{})
+	queries = GetDetailQueries(config.FleetConfig{}, &fleet.Features{EnableHostUsers: true})
 	assert.Equal(t, originalQuery, queries["users"].Query)
+}
+
+func TestDirectIngestSoftware(t *testing.T) {
+	ds := new(mock.Store)
+
+	t.Run("vendor gets truncated", func(t *testing.T) {
+		for i, tc := range []struct {
+			data     []map[string]string
+			expected string
+		}{
+			{
+				data: []map[string]string{
+					{
+						"name":              "Software 1",
+						"version":           "12.5",
+						"source":            "My backyard",
+						"bundle_identifier": "",
+						"vendor":            "Fleet",
+					},
+				},
+				expected: "Fleet",
+			},
+			{
+				data: []map[string]string{
+					{
+						"name":              "Software 1",
+						"version":           "12.5",
+						"source":            "My backyard",
+						"bundle_identifier": "",
+						"vendor":            `oFZTwTV5WxJt02EVHEBcnhLzuJ8wnxKwfbabPWy7yTSiQbabEcAGDVmoXKZEZJLWObGD0cVfYptInHYgKjtDeDsBh2a8669EnyAqyBECXbFjSh1111`,
+					},
+				},
+				expected: `oFZTwTV5WxJt02EVHEBcnhLzuJ8wnxKwfbabPWy7yTSiQbabEcAGDVmoXKZEZJLWObGD0cVfYptInHYgKjtDeDsBh2a8669EnyAqyBECXbFjSh1...`,
+			},
+		} {
+			ds.UpdateHostSoftwareFunc = func(ctx context.Context, hostID uint, software []fleet.Software) error {
+				require.Len(t, software, 1)
+				require.Equal(t, tc.expected, software[0].Vendor)
+				return nil
+			}
+
+			err := directIngestSoftware(
+				context.Background(),
+				log.NewNopLogger(),
+				&fleet.Host{ID: uint(i)},
+				ds,
+				tc.data,
+				false,
+			)
+
+			require.NoError(t, err)
+			require.True(t, ds.UpdateHostSoftwareFuncInvoked)
+			ds.UpdateHostSoftwareFuncInvoked = false
+		}
+	})
+}
+
+func TestDirectIngestWindowsUpdateHistory(t *testing.T) {
+	ds := new(mock.Store)
+	ds.InsertWindowsUpdatesFunc = func(ctx context.Context, hostID uint, updates []fleet.WindowsUpdate) error {
+		require.Len(t, updates, 6)
+		require.ElementsMatch(t, []fleet.WindowsUpdate{
+			{KBID: 2267602, DateEpoch: 1657929207},
+			{KBID: 890830, DateEpoch: 1658226954},
+			{KBID: 5013887, DateEpoch: 1658225364},
+			{KBID: 5005463, DateEpoch: 1658225225},
+			{KBID: 5010472, DateEpoch: 1658224963},
+			{KBID: 4052623, DateEpoch: 1657929544},
+		}, updates)
+		return nil
+	}
+
+	host := fleet.Host{
+		ID: 1,
+	}
+
+	payload := []map[string]string{
+		{"date": "1659392951", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.1239.0)"},
+		{"date": "1658271402", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.442.0)"},
+		{"date": "1658228495", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.415.0)"},
+		{"date": "1658226954", "title": "Windows Malicious Software Removal Tool x64 - v5.103 (KB890830)"},
+		{"date": "1658225364", "title": "2022-06 Cumulative Update for .NET Framework 3.5 and 4.8 for Windows 10 Version 21H2 for x64 (KB5013887)"},
+		{"date": "1658225225", "title": "2022-04 Update for Windows 10 Version 21H2 for x64-based Systems (KB5005463)"},
+		{"date": "1658224963", "title": "2022-02 Cumulative Update Preview for .NET Framework 3.5 and 4.8 for Windows 10 Version 21H2 for x64 (KB5010472)"},
+		{"date": "1658222131", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.400.0)"},
+		{"date": "1658189063", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.376.0)"},
+		{"date": "1658185542", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.386.0)"},
+		{"date": "1657929544", "title": "Update for Microsoft Defender Antivirus antimalware platform - KB4052623 (Version 4.18.2205.7)"},
+		{"date": "1657929207", "title": "Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.371.203.0)"},
+	}
+
+	err := directIngestWindowsUpdateHistory(context.Background(), log.NewNopLogger(), &host, ds, payload, false)
+	require.NoError(t, err)
+	require.True(t, ds.InsertWindowsUpdatesFuncInvoked)
+}
+
+func TestIngestKubequeryInfo(t *testing.T) {
+	err := ingestKubequeryInfo(context.Background(), log.NewNopLogger(), &fleet.Host{}, nil)
+	require.Error(t, err)
+	err = ingestKubequeryInfo(context.Background(), log.NewNopLogger(), &fleet.Host{}, []map[string]string{})
+	require.Error(t, err)
+	err = ingestKubequeryInfo(context.Background(), log.NewNopLogger(), &fleet.Host{}, []map[string]string{
+		{
+			"cluster_name": "foo",
+		},
+	})
+	require.NoError(t, err)
 }

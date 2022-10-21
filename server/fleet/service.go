@@ -10,6 +10,14 @@ import (
 	"github.com/kolide/kit/version"
 )
 
+// EnterpriseOverrides contains the methods that can be overriden by the
+// enterprise service
+//
+// TODO: find if there's a better way to accomplish this and standardize.
+type EnterpriseOverrides struct {
+	HostFeatures func(context context.Context, host *Host) (*Features, error)
+}
+
 type OsqueryService interface {
 	EnrollAgent(
 		ctx context.Context, enrollSecret, hostIdentifier string, hostDetails map[string](map[string]string),
@@ -41,6 +49,22 @@ type OsqueryService interface {
 
 type Service interface {
 	OsqueryService
+
+	// AuthenticateOrbitHost loads host identified by orbit's nodeKey. Returns an error if that nodeKey doesn't exist
+	AuthenticateOrbitHost(ctx context.Context, nodeKey string) (host *Host, debug bool, err error)
+	// EnrollOrbit enrolls orbit to Fleet by using the enrollSecret and returns the orbitNodeKey if successful
+	EnrollOrbit(ctx context.Context, hardwareUUID string, enrollSecret string) (orbitNodeKey string, err error)
+	// GetOrbitFlags returns team specific flags in agent options if the team id is not nil for host, otherwise it returns flags from global agent options
+	GetOrbitFlags(ctx context.Context) (flags json.RawMessage, err error)
+
+	// SetOrUpdateDeviceAuthToken creates or updates a device auth token for the given host.
+	SetOrUpdateDeviceAuthToken(ctx context.Context, authToken string) error
+
+	// SetEnterpriseOverrides allows the enterprise service to override specific methods
+	// that can't be easily overridden via embedding.
+	//
+	// TODO: find if there's a better way to accomplish this and standardize.
+	SetEnterpriseOverrides(overrides EnterpriseOverrides)
 
 	///////////////////////////////////////////////////////////////////////////////
 	// UserService contains methods for managing a Fleet User.
@@ -253,7 +277,7 @@ type Service interface {
 	// The return value can also include policy information and CVE scores based
 	// on the values provided to `opts`
 	GetHost(ctx context.Context, id uint, opts HostDetailOptions) (host *HostDetail, err error)
-	GetHostSummary(ctx context.Context, teamID *uint, platform *string) (summary *HostSummary, err error)
+	GetHostSummary(ctx context.Context, teamID *uint, platform *string, lowDiskSpace *int) (summary *HostSummary, err error)
 	DeleteHost(ctx context.Context, id uint) (err error)
 	// HostByIdentifier returns one host matching the provided identifier.
 	// Possible matches can be on osquery_host_identifier, node_key, UUID, or
@@ -279,23 +303,33 @@ type Service interface {
 	// ListHostDeviceMapping returns the list of device-mapping of user's email address
 	// for the host.
 	ListHostDeviceMapping(ctx context.Context, id uint) ([]*HostDeviceMapping, error)
+
+	// FailingPoliciesCount returns the number of failling policies for 'host'
+	FailingPoliciesCount(ctx context.Context, host *Host) (uint, error)
+
 	// ListDevicePolicies lists all policies for the given host, including passing / failing summaries
 	ListDevicePolicies(ctx context.Context, host *Host) ([]*HostPolicy, error)
 
+	// DisableAuthForPing is used by the /orbit/ping and /device/ping endpoints
+	// to bypass authentication, as they are public
+	DisableAuthForPing(ctx context.Context)
+
 	MacadminsData(ctx context.Context, id uint) (*MacadminsData, error)
 	AggregatedMacadminsData(ctx context.Context, teamID *uint) (*AggregatedMacadminsData, error)
-	AggregatedMDMSolutions(ctx context.Context, teamID *uint, mdmID uint) (*AggregatedMDMSolutions, error)
+	GetMDMSolution(ctx context.Context, mdmID uint) (*MDMSolution, error)
+	GetMunkiIssue(ctx context.Context, munkiIssueID uint) (*MunkiIssue, error)
 
 	// OSVersions returns a list of operating systems and associated host counts, which may be
-	// filtered using the following optional criteria: team id, platform, or operating system id
-	OSVersions(ctx context.Context, teamID *uint, platform *string, osID *uint) (*OSVersions, error)
+	// filtered using the following optional criteria: team id, platform, or name and version.
+	// Name cannot be used without version, and conversely, version cannot be used without name.
+	OSVersions(ctx context.Context, teamID *uint, platform *string, name *string, version *string) (*OSVersions, error)
 
 	///////////////////////////////////////////////////////////////////////////////
 	// AppConfigService provides methods for configuring  the Fleet application
 
 	NewAppConfig(ctx context.Context, p AppConfig) (info *AppConfig, err error)
 	AppConfig(ctx context.Context) (info *AppConfig, err error)
-	ModifyAppConfig(ctx context.Context, p []byte) (info *AppConfig, err error)
+	ModifyAppConfig(ctx context.Context, p []byte, applyOpts ApplySpecOptions) (info *AppConfig, err error)
 	SandboxEnabled() bool
 
 	// ApplyEnrollSecretSpec adds and updates the enroll secrets specified in the spec.
@@ -398,7 +432,7 @@ type Service interface {
 	// ModifyTeam modifies an existing team (besides agent options).
 	ModifyTeam(ctx context.Context, id uint, payload TeamPayload) (*Team, error)
 	// ModifyTeamAgentOptions modifies agent options for a team.
-	ModifyTeamAgentOptions(ctx context.Context, id uint, options json.RawMessage) (*Team, error)
+	ModifyTeamAgentOptions(ctx context.Context, id uint, teamOptions json.RawMessage, applyOptions ApplySpecOptions) (*Team, error)
 	// AddTeamUsers adds users to an existing team.
 	AddTeamUsers(ctx context.Context, teamID uint, users []TeamUser) (*Team, error)
 	// DeleteTeamUsers deletes users from an existing team.
@@ -416,7 +450,7 @@ type Service interface {
 	// ModifyTeamEnrollSecrets modifies enroll secrets for a team.
 	ModifyTeamEnrollSecrets(ctx context.Context, teamID uint, secrets []EnrollSecret) ([]*EnrollSecret, error)
 	// ApplyTeamSpecs applies the changes for each team as defined in the specs.
-	ApplyTeamSpecs(ctx context.Context, specs []*TeamSpec) error
+	ApplyTeamSpecs(ctx context.Context, specs []*TeamSpec, applyOpts ApplySpecOptions) error
 
 	///////////////////////////////////////////////////////////////////////////////
 	// ActivitiesService
@@ -473,16 +507,65 @@ type Service interface {
 	// Team Policies
 
 	NewTeamPolicy(ctx context.Context, teamID uint, p PolicyPayload) (*Policy, error)
-	ListTeamPolicies(ctx context.Context, teamID uint) ([]*Policy, error)
+	ListTeamPolicies(ctx context.Context, teamID uint) (teamPolicies, inheritedPolicies []*Policy, err error)
 	DeleteTeamPolicies(ctx context.Context, teamID uint, ids []uint) ([]uint, error)
 	ModifyTeamPolicy(ctx context.Context, teamID uint, id uint, p ModifyPolicyPayload) (*Policy, error)
 	GetTeamPolicyByIDQueries(ctx context.Context, teamID uint, policyID uint) (*Policy, error)
 
-	/// Geolocation
+	///////////////////////////////////////////////////////////////////////////////
+	// Geolocation
+
 	LookupGeoIP(ctx context.Context, ip string) *GeoLocation
 
 	///////////////////////////////////////////////////////////////////////////////
 	// Installers
 
 	GetInstaller(ctx context.Context, installer Installer) (io.ReadCloser, int64, error)
+	CheckInstallerExistence(ctx context.Context, installer Installer) error
+
+	///////////////////////////////////////////////////////////////////////////////
+	// Apple MDM
+
+	// NewMDMAppleEnrollmentProfile creates and returns new enrollment profile.
+	// Such enrollment profiles allow devices to enroll to Fleet MDM.
+	NewMDMAppleEnrollmentProfile(ctx context.Context, enrollmentPayload MDMAppleEnrollmentProfilePayload) (enrollmentProfile *MDMAppleEnrollmentProfile, err error)
+
+	// ListMDMAppleEnrollmentProfiles returns the list of all the enrollment profiles.
+	ListMDMAppleEnrollmentProfiles(ctx context.Context) ([]*MDMAppleEnrollmentProfile, error)
+
+	// GetMDMAppleEnrollmentProfileByToken returns the Apple enrollment from its secret token.
+	GetMDMAppleEnrollmentProfileByToken(ctx context.Context, enrollmentToken string) (profile []byte, err error)
+
+	// GetMDMAppleCommandResults returns the execution results of a command identified by a CommandUUID.
+	// The map returned has a result for each target device ID.
+	GetMDMAppleCommandResults(ctx context.Context, commandUUID string) (map[string]*MDMAppleCommandResult, error)
+
+	// UploadMDMAppleInstaller uploads an Apple installer to Fleet.
+	UploadMDMAppleInstaller(ctx context.Context, name string, size int64, installer io.Reader) (*MDMAppleInstaller, error)
+
+	// GetMDMAppleInstallerByID returns the installer details of an installer, all fields except its content,
+	// (MDMAppleInstaller.Installer is nil).
+	GetMDMAppleInstallerByID(ctx context.Context, id uint) (*MDMAppleInstaller, error)
+
+	// DeleteMDMAppleInstaller deletes an Apple installer from Fleet.
+	DeleteMDMAppleInstaller(ctx context.Context, id uint) error
+
+	// GetMDMAppleInstallerByToken returns the installer with its contents included (MDMAppleInstaller.Installer) from its secret token.
+	GetMDMAppleInstallerByToken(ctx context.Context, token string) (*MDMAppleInstaller, error)
+
+	// GetMDMAppleInstallerDetailsByToken loads the installer details, all fields except its content,
+	// (MDMAppleInstaller.Installer is nil) from its secret token.
+	GetMDMAppleInstallerDetailsByToken(ctx context.Context, token string) (*MDMAppleInstaller, error)
+
+	// ListMDMAppleInstallers lists all the uploaded installers.
+	ListMDMAppleInstallers(ctx context.Context) ([]MDMAppleInstaller, error)
+
+	// ListMDMAppleDevices lists all the MDM enrolled Apple devices.
+	ListMDMAppleDevices(ctx context.Context) ([]MDMAppleDevice, error)
+
+	// ListMDMAppleDEPDevices lists all the devices added to this MDM server in Apple Business Manager (ABM).
+	ListMDMAppleDEPDevices(ctx context.Context) ([]MDMAppleDEPDevice, error)
+
+	// EnqueueMDMAppleCommand enqueues a command for execution on the given devices.
+	EnqueueMDMAppleCommand(ctx context.Context, command *MDMAppleCommand, deviceIDs []string, noPush bool) (status int, result *CommandEnqueueResult, err error)
 }

@@ -8,7 +8,6 @@
   - [Running Fleet](#running-fleet)
   - [`fleetctl config`](#fleetctl-config)
   - [`fleetctl setup`](#fleetctl-setup)
-  - [Connecting a host](#connecting-a-host)
   - [Query hosts](#query-hosts)
 - [Logging in to an existing Fleet instance](#logging-in-to-an-existing-fleet-instance)
 - [Using fleetctl to configure Fleet](#using-fleetctl-to-configure-fleet)
@@ -27,6 +26,10 @@ Fleetctl also provides a quick way to work with all the data exposed by Fleet wi
 ## Using fleetctl
 
 You can use `fleetctl` to accomplish many tasks you would typically need to do through the Fleet UI. You can even set up or apply configuration files to the Fleet server.
+
+<div purpose="embedded-content">
+   <iframe src="https://www.youtube.com/embed/ERbknt6w8eg" allowfullscreen></iframe>
+</div>
 
 ### Available commands
 
@@ -160,6 +163,7 @@ When the query is done (or you have enough results), CTRL-C and look at the `res
       "config_valid": "1",
       "extensions": "active",
       "host_hostname": "marpaia",
+      "host_display_name": "marpaia",
       "instance_id": "37840766-7182-4a68-a204-c7f577bd71e1",
       "pid": "22984",
       "start_time": "1527031727",

@@ -8,9 +8,10 @@ import { PolicyContext } from "context/policy";
 import { TableContext } from "context/table";
 import { NotificationContext } from "context/notification";
 
-import { IAutomationsConfig, IConfig } from "interfaces/config";
+import { IConfig, IWebhookSettings } from "interfaces/config";
+import { IIntegrations } from "interfaces/integration";
 import { IPolicyStats, ILoadAllPoliciesResponse } from "interfaces/policy";
-import { ITeamAutomationsConfig, ITeamConfig } from "interfaces/team";
+import { ITeamConfig } from "interfaces/team";
 
 import PATHS from "router/paths";
 import configAPI from "services/entities/config";
@@ -28,7 +29,7 @@ import MainContent from "components/MainContent";
 import PoliciesTable from "./components/PoliciesTable";
 import ManageAutomationsModal from "./components/ManageAutomationsModal";
 import AddPolicyModal from "./components/AddPolicyModal";
-import DeletePoliciesModal from "./components/DeletePoliciesModal";
+import DeletePolicyModal from "./components/DeletePolicyModal";
 
 interface IManagePoliciesPageProps {
   router: InjectedRouter;
@@ -75,18 +76,15 @@ const ManagePolicyPage = ({
   } = useContext(PolicyContext);
 
   const { setResetSelectedRows } = useContext(TableContext);
-
-  const [isAutomationsLoading, setIsAutomationsLoading] = useState<boolean>(
-    false
-  );
-  const [isDeletingPolicy, setIsDeletingPolicy] = useState<boolean>(false);
+  const [isUpdatingAutomations, setIsUpdatingAutomations] = useState(false);
+  const [isUpdatingPolicies, setIsUpdatingPolicies] = useState(false);
   const [selectedPolicyIds, setSelectedPolicyIds] = useState<number[]>([]);
   const [showManageAutomationsModal, setShowManageAutomationsModal] = useState(
     false
   );
   const [showPreviewPayloadModal, setShowPreviewPayloadModal] = useState(false);
   const [showAddPolicyModal, setShowAddPolicyModal] = useState(false);
-  const [showDeletePoliciesModal, setShowDeletePoliciesModal] = useState(false);
+  const [showDeletePolicyModal, setShowDeletePolicyModal] = useState(false);
   const [showInheritedPolicies, setShowInheritedPolicies] = useState(false);
 
   useEffect(() => {
@@ -197,16 +195,17 @@ const ManagePolicyPage = ({
 
   const toggleAddPolicyModal = () => setShowAddPolicyModal(!showAddPolicyModal);
 
-  const toggleDeletePoliciesModal = () =>
-    setShowDeletePoliciesModal(!showDeletePoliciesModal);
+  const toggleDeletePolicyModal = () =>
+    setShowDeletePolicyModal(!showDeletePolicyModal);
 
   const toggleShowInheritedPolicies = () =>
     setShowInheritedPolicies(!showInheritedPolicies);
 
-  const handleUpdateAutomations = async (
-    requestBody: IAutomationsConfig | ITeamAutomationsConfig
-  ) => {
-    setIsAutomationsLoading(true);
+  const handleUpdateAutomations = async (requestBody: {
+    webhook_settings: Pick<IWebhookSettings, "failing_policies_webhook">;
+    integrations: IIntegrations;
+  }) => {
+    setIsUpdatingAutomations(true);
     try {
       await (teamId
         ? teamsAPI.update(requestBody, teamId)
@@ -219,7 +218,7 @@ const ManagePolicyPage = ({
       );
     } finally {
       toggleManageAutomationsModal();
-      setIsAutomationsLoading(false);
+      setIsUpdatingAutomations(false);
       refetchConfig();
       teamId && refetchTeamConfig();
     }
@@ -232,14 +231,14 @@ const ManagePolicyPage = ({
     toggleAddPolicyModal();
   };
 
-  const onDeletePoliciesClick = (selectedTableIds: number[]): void => {
-    toggleDeletePoliciesModal();
+  const onDeletePolicyClick = (selectedTableIds: number[]): void => {
+    toggleDeletePolicyModal();
     setSelectedPolicyIds(selectedTableIds);
   };
 
-  const onDeletePoliciesSubmit = async () => {
+  const onDeletePolicySubmit = async () => {
     const id = currentTeam?.id;
-    setIsDeletingPolicy(true);
+    setIsUpdatingPolicies(true);
     try {
       const request = id
         ? teamPoliciesAPI.destroy(id, selectedPolicyIds)
@@ -263,8 +262,8 @@ const ManagePolicyPage = ({
         }. Please try again.`
       );
     } finally {
-      toggleDeletePoliciesModal();
-      setIsDeletingPolicy(false);
+      toggleDeletePolicyModal();
+      setIsUpdatingPolicies(false);
     }
   };
 
@@ -426,7 +425,7 @@ const ManagePolicyPage = ({
                   isFetchingConfig
                 }
                 onAddPolicyClick={onAddPolicyClick}
-                onDeletePoliciesClick={onDeletePoliciesClick}
+                onDeletePolicyClick={onDeletePolicyClick}
                 canAddOrDeletePolicy={canAddOrDeletePolicy}
                 currentTeam={currentTeam}
                 currentAutomatedPolicies={currentAutomatedPolicies}
@@ -442,7 +441,7 @@ const ManagePolicyPage = ({
                 policiesList={globalPolicies || []}
                 isLoading={isFetchingGlobalPolicies || isFetchingConfig}
                 onAddPolicyClick={onAddPolicyClick}
-                onDeletePoliciesClick={onDeletePoliciesClick}
+                onDeletePolicyClick={onDeletePolicyClick}
                 canAddOrDeletePolicy={canAddOrDeletePolicy}
                 currentTeam={currentTeam}
                 currentAutomatedPolicies={currentAutomatedPolicies}
@@ -478,7 +477,7 @@ const ManagePolicyPage = ({
                 <PoliciesTable
                   isLoading={isFetchingGlobalPolicies}
                   policiesList={globalPolicies || []}
-                  onDeletePoliciesClick={noop}
+                  onDeletePolicyClick={noop}
                   canAddOrDeletePolicy={canAddOrDeletePolicy}
                   tableType="inheritedPolicies"
                   currentTeam={currentTeam}
@@ -491,7 +490,7 @@ const ManagePolicyPage = ({
             automationsConfig={automationsConfig}
             availableIntegrations={config.integrations}
             availablePolicies={availablePoliciesForAutomation}
-            isAutomationsLoading={isAutomationsLoading}
+            isUpdatingAutomations={isUpdatingAutomations}
             showPreviewPayloadModal={showPreviewPayloadModal}
             onExit={toggleManageAutomationsModal}
             handleSubmit={handleUpdateAutomations}
@@ -506,11 +505,11 @@ const ManagePolicyPage = ({
             teamName={currentTeam?.name}
           />
         )}
-        {showDeletePoliciesModal && (
-          <DeletePoliciesModal
-            isLoading={isDeletingPolicy}
-            onCancel={toggleDeletePoliciesModal}
-            onSubmit={onDeletePoliciesSubmit}
+        {showDeletePolicyModal && (
+          <DeletePolicyModal
+            isUpdatingPolicies={isUpdatingPolicies}
+            onCancel={toggleDeletePolicyModal}
+            onSubmit={onDeletePolicySubmit}
           />
         )}
       </div>

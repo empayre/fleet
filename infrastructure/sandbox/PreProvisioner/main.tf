@@ -13,6 +13,8 @@ terraform {
 
 data "aws_region" "current" {}
 
+data "aws_caller_identity" "current" {}
+
 locals {
   name      = "preprovisioner"
   full_name = "${var.prefix}-${local.name}"
@@ -369,6 +371,7 @@ resource "docker_registry_image" "main" {
   build {
     context     = "${path.module}/lambda/"
     pull_parent = true
+    platform    = "linux/amd64"
   }
 
   depends_on = [

@@ -2,7 +2,10 @@ import React from "react";
 import { Link } from "react-router";
 import PATHS from "router/paths";
 
-import { IOperatingSystemVersion } from "interfaces/operating_system";
+import {
+  formatOperatingSystemDisplayName,
+  IOperatingSystemVersion,
+} from "interfaces/operating_system";
 
 import TextCell from "components/TableContainer/DataTable/TextCell";
 import HeaderCell from "components/TableContainer/DataTable/HeaderCell";
@@ -40,7 +43,12 @@ const defaultTableHeaders = [
     Header: "Name",
     disableSortBy: true,
     accessor: "name_only",
-    Cell: (cellProps: ICellProps) => <TextCell value={cellProps.cell.value} />,
+    Cell: ({ cell: { value } }: ICellProps) => (
+      <TextCell
+        value={value}
+        formatter={(name) => formatOperatingSystemDisplayName(name)}
+      />
+    ),
   },
   {
     title: "Version",
@@ -60,14 +68,17 @@ const defaultTableHeaders = [
     disableSortBy: false,
     accessor: "hosts_count",
     Cell: (cellProps: ICellProps): JSX.Element => {
+      const { hosts_count, name_only, version } = cellProps.row.original;
       return (
         <span className="hosts-cell__wrapper">
           <span className="hosts-cell__count">
-            <TextCell value={cellProps.cell.value} />
+            <TextCell value={hosts_count} />
           </span>
           <span className="hosts-cell__link">
             <Link
-              to={`${PATHS.MANAGE_HOSTS}?operating_system_id=${cellProps.row.original.os_id}`}
+              to={`${PATHS.MANAGE_HOSTS}?os_name=${encodeURIComponent(
+                name_only
+              )}&os_version=${encodeURIComponent(version)}`}
               className="hosts-link"
             >
               <span className="link-text">View all hosts</span>

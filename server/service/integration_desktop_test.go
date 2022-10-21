@@ -30,7 +30,7 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 		{HostID: hosts[0].ID, Email: "b@b.c", Source: "google_chrome_profiles"},
 	})
 	require.NoError(t, s.ds.SetOrUpdateMDMData(context.Background(), hosts[0].ID, true, "url", false))
-	require.NoError(t, s.ds.SetOrUpdateMunkiVersion(context.Background(), hosts[0].ID, "1.3.0"))
+	require.NoError(t, s.ds.SetOrUpdateMunkiInfo(context.Background(), hosts[0].ID, "1.3.0", nil, nil))
 	// create a battery for hosts[0]
 	require.NoError(t, s.ds.ReplaceHostBatteries(context.Background(), hosts[0].ID, []*fleet.HostBattery{
 		{HostID: hosts[0].ID, SerialNumber: "a", CycleCount: 1, Health: "Good"},
@@ -135,14 +135,6 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 	json.NewDecoder(res.Body).Decode(&getHostResp)
 	res.Body.Close()
 	require.Nil(t, listPoliciesResp.Policies)
-
-	// get list of api features
-	apiFeaturesResp := deviceAPIFeaturesResponse{}
-	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/api_features", nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&apiFeaturesResp)
-	res.Body.Close()
-	require.Nil(t, apiFeaturesResp.Err)
-	require.NotNil(t, apiFeaturesResp.Features)
 }
 
 // TestDefaultTransparencyURL tests that Fleet Free licensees are restricted to the default transparency url.
@@ -185,7 +177,7 @@ func (s *integrationTestSuite) TestDefaultTransparencyURL() {
 
 	// empty string applies default url
 	acResp = appConfigResponse{}
-	s.DoJSON("PATCH", "/api/latest/fleet/config", fleet.AppConfig{FleetDesktop: fleet.FleetDesktopSettings{TransparencyURL: ""}}, http.StatusOK, &acResp)
+	s.DoJSON("PATCH", "/api/latest/fleet/config", json.RawMessage(`{"fleet_desktop": {"transparency_url":""}}`), http.StatusOK, &acResp)
 	require.NotNil(t, acResp)
 	require.Equal(t, fleet.DefaultTransparencyURL, acResp.FleetDesktop.TransparencyURL)
 

@@ -25,6 +25,7 @@ func encodeResponse(ctx context.Context, w http.ResponseWriter, response interfa
 	// page and the error will be logged
 	if page, ok := response.(htmlPage); ok {
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+		writeBrowserSecurityHeaders(w)
 		if coder, ok := page.error().(kithttp.StatusCoder); ok {
 			w.WriteHeader(coder.StatusCode())
 		}
@@ -196,7 +197,7 @@ func hostListOptionsFromRequest(r *http.Request) (fleet.HostListOptions, error) 
 
 	status := r.URL.Query().Get("status")
 	switch fleet.HostStatus(status) {
-	case fleet.StatusNew, fleet.StatusOnline, fleet.StatusOffline, fleet.StatusMIA:
+	case fleet.StatusNew, fleet.StatusOnline, fleet.StatusOffline, fleet.StatusMIA, fleet.StatusMissing:
 		hopt.StatusFilter = fleet.HostStatus(status)
 	case "":
 		// No error when unset
@@ -252,14 +253,24 @@ func hostListOptionsFromRequest(r *http.Request) (fleet.HostListOptions, error) 
 		hopt.SoftwareIDFilter = &sid
 	}
 
-	operatingSystemID := r.URL.Query().Get("operating_system_id")
-	if operatingSystemID != "" {
-		id, err := strconv.Atoi(operatingSystemID)
+	osID := r.URL.Query().Get("os_id")
+	if osID != "" {
+		id, err := strconv.Atoi(osID)
 		if err != nil {
 			return hopt, err
 		}
-		osid := uint(id)
-		hopt.OperatingSystemIDFilter = &osid
+		sid := uint(id)
+		hopt.OSIDFilter = &sid
+	}
+
+	osName := r.URL.Query().Get("os_name")
+	if osName != "" {
+		hopt.OSNameFilter = &osName
+	}
+
+	osVersion := r.URL.Query().Get("os_version")
+	if osVersion != "" {
+		hopt.OSVersionFilter = &osVersion
 	}
 
 	disableFailingPolicies := r.URL.Query().Get("disable_failing_policies")
@@ -298,7 +309,28 @@ func hostListOptionsFromRequest(r *http.Request) (fleet.HostListOptions, error) 
 		// No error when unset
 	default:
 		return hopt, ctxerr.Errorf(r.Context(), "invalid mdm enrollment status %s", enrollmentStatus)
+	}
 
+	munkiIssueID := r.URL.Query().Get("munki_issue_id")
+	if munkiIssueID != "" {
+		id, err := strconv.Atoi(munkiIssueID)
+		if err != nil {
+			return hopt, err
+		}
+		mid := uint(id)
+		hopt.MunkiIssueIDFilter = &mid
+	}
+
+	lowDiskSpace := r.URL.Query().Get("low_disk_space")
+	if lowDiskSpace != "" {
+		v, err := strconv.Atoi(lowDiskSpace)
+		if err != nil {
+			return hopt, err
+		}
+		if v < 1 || v > 100 {
+			return hopt, ctxerr.Errorf(r.Context(), "invalid low_disk_space threshold, must be between 1 and 100: %s", lowDiskSpace)
+		}
+		hopt.LowDiskSpaceFilter = &v
 	}
 
 	return hopt, nil

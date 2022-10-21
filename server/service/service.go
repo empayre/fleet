@@ -17,6 +17,9 @@ import (
 	"github.com/fleetdm/fleet/v4/server/service/async"
 	"github.com/fleetdm/fleet/v4/server/sso"
 	kitlog "github.com/go-kit/kit/log"
+	nanodep_storage "github.com/micromdm/nanodep/storage"
+	nanomdm_push "github.com/micromdm/nanomdm/push"
+	nanomdm_storage "github.com/micromdm/nanomdm/storage"
 )
 
 var _ fleet.Service = (*Service)(nil)
@@ -48,10 +51,21 @@ type Service struct {
 	jitterH  map[time.Duration]*jitterHashTable
 
 	geoIP fleet.GeoIP
+
+	*fleet.EnterpriseOverrides
+
+	depStorage       nanodep_storage.AllStorage
+	mdmStorage       nanomdm_storage.AllStorage
+	mdmPushService   nanomdm_push.Pusher
+	mdmPushCertTopic string
 }
 
 func (s *Service) LookupGeoIP(ctx context.Context, ip string) *fleet.GeoLocation {
 	return s.geoIP.Lookup(ctx, ip)
+}
+
+func (s *Service) SetEnterpriseOverrides(overrides fleet.EnterpriseOverrides) {
+	s.EnterpriseOverrides = &overrides
 }
 
 // NewService creates a new service from the config struct
@@ -73,6 +87,10 @@ func NewService(
 	failingPolicySet fleet.FailingPolicySet,
 	geoIP fleet.GeoIP,
 	enrollHostLimiter fleet.EnrollHostLimiter,
+	depStorage nanodep_storage.AllStorage,
+	mdmStorage nanomdm_storage.AllStorage,
+	mdmPushService nanomdm_push.Pusher,
+	mdmPushCertTopic string,
 ) (fleet.Service, error) {
 	authorizer, err := authz.NewAuthorizer()
 	if err != nil {
@@ -99,6 +117,10 @@ func NewService(
 		jitterMu:          new(sync.Mutex),
 		geoIP:             geoIP,
 		enrollHostLimiter: enrollHostLimiter,
+		depStorage:        depStorage,
+		mdmStorage:        mdmStorage,
+		mdmPushService:    mdmPushService,
+		mdmPushCertTopic:  mdmPushCertTopic,
 	}
 	return validationMiddleware{svc, ds, sso}, nil
 }

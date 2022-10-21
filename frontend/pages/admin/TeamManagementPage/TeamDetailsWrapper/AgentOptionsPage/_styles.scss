@@ -11,15 +11,30 @@
     margin-top: 20px;
   }
 
-  a {
-    color: $core-vibrant-blue;
-    font-size: $x-small;
-    font-weight: $bold;
-    text-decoration: none;
+  &__osquery-options-form {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    width: 100%;
   }
 
-  .icon {
-    width: 12px;
-    height: 12px;
+  &__btn-wrap {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+
+    p {
+      font-size: $x-small;
+      font-weight: $bold;
+    }
+  }
+
+  &__text-editor-wrapper {
+    width: 100%;
+    margin-bottom: $pad-medium;
+  }
+
+  .yaml-ace__label {
+    min-height: 0;
   }
 }

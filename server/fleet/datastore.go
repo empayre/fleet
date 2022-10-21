@@ -30,6 +30,7 @@ type CarveStore interface {
 type InstallerStore interface {
 	Get(ctx context.Context, installer Installer) (io.ReadCloser, int64, error)
 	Put(ctx context.Context, installer Installer) (string, error)
+	Exists(ctx context.Context, installer Installer) (bool, error)
 }
 
 // Datastore combines all the interfaces in the Fleet DAL
@@ -205,7 +206,7 @@ type Datastore interface {
 	// different osquery queries failed to populate details.
 	CleanupIncomingHosts(ctx context.Context, now time.Time) ([]uint, error)
 	// GenerateHostStatusStatistics retrieves the count of online, offline, MIA and new hosts.
-	GenerateHostStatusStatistics(ctx context.Context, filter TeamFilter, now time.Time, platform *string) (*HostSummary, error)
+	GenerateHostStatusStatistics(ctx context.Context, filter TeamFilter, now time.Time, platform *string, lowDiskSpace *int) (*HostSummary, error)
 	// HostIDsByName Retrieve the IDs associated with the given hostnames
 	HostIDsByName(ctx context.Context, filter TeamFilter, hostnames []string) ([]uint, error)
 	// HostIDsByOSVersion retrieves the IDs of all host matching osVersion
@@ -231,23 +232,31 @@ type Datastore interface {
 	ListHostBatteries(ctx context.Context, id uint) ([]*HostBattery, error)
 
 	// LoadHostByDeviceAuthToken loads the host identified by the device auth token.
-	// If the token is invalid it returns a NotFoundError.
-	LoadHostByDeviceAuthToken(ctx context.Context, authToken string) (*Host, error)
+	// If the token is invalid or expired it returns a NotFoundError.
+	LoadHostByDeviceAuthToken(ctx context.Context, authToken string, tokenTTL time.Duration) (*Host, error)
 	// SetOrUpdateDeviceAuthToken inserts or updates the auth token for a host.
 	SetOrUpdateDeviceAuthToken(ctx context.Context, hostID uint, authToken string) error
+
+	// FailingPoliciesCount returns the number of failling policies for 'host'
+	FailingPoliciesCount(ctx context.Context, host *Host) (uint, error)
 
 	// ListPoliciesForHost lists the policies that a host will check and whether they are passing
 	ListPoliciesForHost(ctx context.Context, host *Host) ([]*HostPolicy, error)
 
-	GetMunkiVersion(ctx context.Context, hostID uint) (string, error)
-	GetMDM(ctx context.Context, hostID uint) (*HostMDM, error)
+	GetHostMunkiVersion(ctx context.Context, hostID uint) (string, error)
+	GetHostMunkiIssues(ctx context.Context, hostID uint) ([]*HostMunkiIssue, error)
+	GetHostMDM(ctx context.Context, hostID uint) (*HostMDM, error)
 
 	AggregatedMunkiVersion(ctx context.Context, teamID *uint) ([]AggregatedMunkiVersion, time.Time, error)
+	AggregatedMunkiIssues(ctx context.Context, teamID *uint) ([]AggregatedMunkiIssue, time.Time, error)
 	AggregatedMDMStatus(ctx context.Context, teamID *uint) (AggregatedMDMStatus, time.Time, error)
 	AggregatedMDMSolutions(ctx context.Context, teamID *uint) ([]AggregatedMDMSolutions, time.Time, error)
 	GenerateAggregatedMunkiAndMDM(ctx context.Context) error
 
-	OSVersions(ctx context.Context, teamID *uint, platform *string, osID *uint) (*OSVersions, error)
+	GetMunkiIssue(ctx context.Context, munkiIssueID uint) (*MunkiIssue, error)
+	GetMDMSolution(ctx context.Context, mdmID uint) (*MDMSolution, error)
+
+	OSVersions(ctx context.Context, teamID *uint, platform *string, name *string, version *string) (*OSVersions, error)
 	UpdateOSVersions(ctx context.Context) error
 
 	///////////////////////////////////////////////////////////////////////////////
@@ -377,7 +386,7 @@ type Datastore interface {
 	LoadHostSoftware(ctx context.Context, host *Host, includeCVEScores bool) error
 	AllSoftwareWithoutCPEIterator(ctx context.Context, excludedPlatforms []string) (SoftwareIterator, error)
 	AddCPEForSoftware(ctx context.Context, software Software, cpe string) error
-	ListSoftwareCPEs(ctx context.Context, excludedPlatforms []string) ([]SoftwareCPE, error)
+	ListSoftwareCPEs(ctx context.Context) ([]SoftwareCPE, error)
 	// InsertVulnerabilities inserts the given vulnerabilities in the datastore, returns the number
 	// of rows inserted. If a vulnerability already exists in the datastore, then it will be ignored.
 	InsertVulnerabilities(ctx context.Context, vulns []SoftwareVulnerability, source VulnerabilitySource) (int64, error)
@@ -428,6 +437,9 @@ type Datastore interface {
 
 	ShouldSendStatistics(ctx context.Context, frequency time.Duration, config config.FleetConfig, license *LicenseInfo) (StatisticsPayload, bool, error)
 	RecordStatisticsSent(ctx context.Context) error
+	// CleanupStatistics executes cleanup tasks to be performed upon successful transmission of
+	// statistics.
+	CleanupStatistics(ctx context.Context) error
 
 	///////////////////////////////////////////////////////////////////////////////
 	// GlobalPoliciesStore
@@ -469,11 +481,19 @@ type Datastore interface {
 	// Team Policies
 
 	NewTeamPolicy(ctx context.Context, teamID uint, authorID *uint, args PolicyPayload) (*Policy, error)
-	ListTeamPolicies(ctx context.Context, teamID uint) ([]*Policy, error)
+	ListTeamPolicies(ctx context.Context, teamID uint) (teamPolicies, inheritedPolicies []*Policy, err error)
 	DeleteTeamPolicies(ctx context.Context, teamID uint, ids []uint) ([]uint, error)
 	TeamPolicy(ctx context.Context, teamID uint, policyID uint) (*Policy, error)
 
 	CleanupPolicyMembership(ctx context.Context, now time.Time) error
+	// IncrementPolicyViolationDays increments the aggregate count of policy violation days. One
+	// policy violation day is added for each policy that a host is failing as of the time the count
+	// is incremented. The count only increments once per 24-hour interval. If the interval has not
+	// elapsed, IncrementPolicyViolationDays returns nil without incrementing the count.
+	IncrementPolicyViolationDays(ctx context.Context) error
+	// InitializePolicyViolationDays sets the aggregated count of policy violation days to zero. If
+	// a record of the count already exists, its `created_at` timestamp is updated to the current timestamp.
+	InitializePolicyViolationDays(ctx context.Context) error
 
 	///////////////////////////////////////////////////////////////////////////////
 	// Locking
@@ -510,6 +530,10 @@ type Datastore interface {
 	// If the node key is invalid it returns a NotFoundError.
 	LoadHostByNodeKey(ctx context.Context, nodeKey string) (*Host, error)
 
+	// LoadHostByOrbitNodeKey loads the whole host identified by the node key.
+	// If the node key is invalid it returns a NotFoundError.
+	LoadHostByOrbitNodeKey(ctx context.Context, nodeKey string) (*Host, error)
+
 	// HostLite will load the primary data of the host with the given id.
 	// We define "primary data" as all host information except the
 	// details (like cpu, memory, gigs_disk_space_available, etc.).
@@ -522,6 +546,9 @@ type Datastore interface {
 
 	// TeamAgentOptions loads the agents options of a team.
 	TeamAgentOptions(ctx context.Context, teamID uint) (*json.RawMessage, error)
+
+	// TeamFeatures loads the features enabled for a team.
+	TeamFeatures(ctx context.Context, teamID uint) (*Features, error)
 
 	// SaveHostPackStats stores (and updates) the pack's scheduled queries stats of a host.
 	SaveHostPackStats(ctx context.Context, hostID uint, stats []PackStats) error
@@ -570,8 +597,9 @@ type Datastore interface {
 	// SaveHostAdditional updates the additional queries results of a host.
 	SaveHostAdditional(ctx context.Context, hostID uint, additional *json.RawMessage) error
 
-	SetOrUpdateMunkiVersion(ctx context.Context, hostID uint, version string) error
+	SetOrUpdateMunkiInfo(ctx context.Context, hostID uint, version string, errors, warnings []string) error
 	SetOrUpdateMDMData(ctx context.Context, hostID uint, enrolled bool, serverURL string, installedFromDep bool) error
+	SetOrUpdateHostDisksSpace(ctx context.Context, hostID uint, gigsAvailable, percentAvailable float64) error
 
 	ReplaceHostDeviceMapping(ctx context.Context, id uint, mappings []*HostDeviceMapping) error
 
@@ -586,6 +614,9 @@ type Datastore interface {
 	// this method should respect the provided host enrollment cooldown, by returning an error if the host has enrolled
 	// within the cooldown period.
 	EnrollHost(ctx context.Context, osqueryHostId, nodeKey string, teamID *uint, cooldown time.Duration) (*Host, error)
+
+	// EnrollOrbit will enroll a new orbit host with the given uuid, setting the orbit node key
+	EnrollOrbit(ctx context.Context, hardwareUUID string, orbitNodeKey string, teamID *uint) (*Host, error)
 
 	SerialUpdateHost(ctx context.Context, host *Host) error
 
@@ -606,11 +637,56 @@ type Datastore interface {
 
 	InnoDBStatus(ctx context.Context) (string, error)
 	ProcessList(ctx context.Context) ([]MySQLProcess, error)
+
+	// Windows Update History
+	InsertWindowsUpdates(ctx context.Context, hostID uint, updates []WindowsUpdate) error
+
+	///////////////////////////////////////////////////////////////////////////////
+	// Apple MDM
+
+	// NewMDMAppleEnrollmentProfile creates and returns new enrollment profile.
+	// Such enrollment profiles allow devices to enroll to Fleet MDM.
+	NewMDMAppleEnrollmentProfile(ctx context.Context, enrollmentPayload MDMAppleEnrollmentProfilePayload) (*MDMAppleEnrollmentProfile, error)
+
+	// GetMDMAppleEnrollmentProfileByToken loads the enrollment profile from its secret token.
+	GetMDMAppleEnrollmentProfileByToken(ctx context.Context, token string) (*MDMAppleEnrollmentProfile, error)
+
+	// ListMDMAppleEnrollmentProfiles returns the list of all the enrollment profiles.
+	ListMDMAppleEnrollmentProfiles(ctx context.Context) ([]*MDMAppleEnrollmentProfile, error)
+
+	// GetMDMAppleCommandResults returns the execution results of a command identified by a CommandUUID.
+	// The map returned has a result for each target device ID.
+	GetMDMAppleCommandResults(ctx context.Context, commandUUID string) (map[string]*MDMAppleCommandResult, error)
+
+	// NewMDMAppleInstaller creates and stores an Apple installer to Fleet.
+	NewMDMAppleInstaller(ctx context.Context, name string, size int64, manifest string, installer []byte, urlToken string) (*MDMAppleInstaller, error)
+
+	// MDMAppleInstaller returns the installer with its contents included (MDMAppleInstaller.Installer) from its token.
+	MDMAppleInstaller(ctx context.Context, token string) (*MDMAppleInstaller, error)
+
+	// MDMAppleInstallerDetailsByID returns the installer details of an installer, all fields except its content,
+	// (MDMAppleInstaller.Installer is nil).
+	MDMAppleInstallerDetailsByID(ctx context.Context, id uint) (*MDMAppleInstaller, error)
+
+	// DeleteMDMAppleInstaller deletes an installer.
+	DeleteMDMAppleInstaller(ctx context.Context, id uint) error
+
+	// MDMAppleInstallerDetailsByToken loads the installer details, all fields except its content,
+	// (MDMAppleInstaller.Installer is nil) from its secret token.
+	MDMAppleInstallerDetailsByToken(ctx context.Context, token string) (*MDMAppleInstaller, error)
+
+	// ListMDMAppleInstallers list all the uploaded installers.
+	ListMDMAppleInstallers(ctx context.Context) ([]MDMAppleInstaller, error)
+
+	// MDMAppleListDevices lists all the MDM enrolled devices.
+	MDMAppleListDevices(ctx context.Context) ([]MDMAppleDevice, error)
 }
 
 const (
 	// Default batch size to use for ScheduledQueryIDsByName.
 	DefaultScheduledQueryIDsByNameBatchSize = 1000
+	// Default batch size for loading IDs of or inserting new munki issues.
+	DefaultMunkiIssuesBatchSize = 100
 )
 
 type MySQLProcess struct {

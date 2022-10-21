@@ -35,7 +35,7 @@ describe("Fleet Desktop", () => {
         cy.getAttached('img[alt="Host info icon"]').click();
       });
       cy.getAttached(".device-user-info__modal").within(() => {
-        cy.getAttached(".device-user-info__btn").click();
+        cy.findByRole("button", { name: /ok/i }).click();
       });
     });
     it("renders and searches the host's software", () => {
@@ -76,7 +76,7 @@ describe("Fleet Desktop", () => {
         defaultCommandTimeout: 15000,
       },
       () => {
-        cy.getAttached(".hostname-container").within(() => {
+        cy.getAttached(".display-name-container").within(() => {
           cy.contains("button", /refetch/i).click();
           cy.findByText(/fetching/i).should("exist");
           cy.contains("button", /refetch/i).should("exist");

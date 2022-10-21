@@ -20,6 +20,9 @@ const (
 	// StatusNew means the host has enrolled in the interval defined by
 	// NewDuration. It is independent of offline and online.
 	StatusNew = HostStatus("new")
+	// StatusMissing means the host is missing for 30 days. It is identical
+	// with StatusMIA, but StatusMIA is deprecated.
+	StatusMissing = HostStatus("missing")
 
 	// NewDuration if a host has been created within this time period it's
 	// considered new.
@@ -63,7 +66,9 @@ type HostListOptions struct {
 
 	SoftwareIDFilter *uint
 
-	OperatingSystemIDFilter *uint
+	OSIDFilter      *uint
+	OSNameFilter    *string
+	OSVersionFilter *string
 
 	DisableFailingPolicies bool
 
@@ -71,10 +76,33 @@ type HostListOptions struct {
 	MDMIDFilter *uint
 	// MDMEnrollmentStatusFilter filters the host by their MDM enrollment status.
 	MDMEnrollmentStatusFilter MDMEnrollStatus
+	// MunkiIssueIDFilter filters the hosts by munki issue ID.
+	MunkiIssueIDFilter *uint
+
+	// LowDiskSpaceFilter filters the hosts by low disk space (defined as a host
+	// with less than N gigs of disk space available). Note that this is a Fleet
+	// Premium feature, Fleet Free ignores the setting (it forces it to nil to
+	// disable it).
+	LowDiskSpaceFilter *int
 }
 
 func (h HostListOptions) Empty() bool {
-	return h.ListOptions.Empty() && len(h.AdditionalFilters) == 0 && h.StatusFilter == "" && h.TeamFilter == nil && h.PolicyIDFilter == nil && h.PolicyResponseFilter == nil
+	return h.ListOptions.Empty() &&
+		h.DeviceMapping == false &&
+		len(h.AdditionalFilters) == 0 &&
+		h.StatusFilter == "" &&
+		h.TeamFilter == nil &&
+		h.PolicyIDFilter == nil &&
+		h.PolicyResponseFilter == nil &&
+		h.SoftwareIDFilter == nil &&
+		h.OSIDFilter == nil &&
+		h.OSNameFilter == nil &&
+		h.OSVersionFilter == nil &&
+		h.DisableFailingPolicies == false &&
+		h.MDMIDFilter == nil &&
+		h.MDMEnrollmentStatusFilter == "" &&
+		h.MunkiIssueIDFilter == nil &&
+		h.LowDiskSpaceFilter == nil
 }
 
 type HostUser struct {
@@ -100,6 +128,7 @@ type Host struct {
 	SeenTime         time.Time `json:"seen_time" db:"seen_time" csv:"seen_time"`                         // Time that the host was last "seen"
 	RefetchRequested bool      `json:"refetch_requested" db:"refetch_requested" csv:"refetch_requested"`
 	NodeKey          string    `json:"-" db:"node_key" csv:"-"`
+	OrbitNodeKey     *string   `json:"-" db:"orbit_node_key" csv:"-"`
 	Hostname         string    `json:"hostname" db:"hostname" csv:"hostname"` // there is a fulltext index on this field
 	UUID             string    `json:"uuid" db:"uuid" csv:"uuid"`             // there is a fulltext index on this field
 	// Platform is the host's platform as defined by osquery's os_version.platform.
@@ -156,6 +185,14 @@ type Host struct {
 	DeviceMapping *json.RawMessage `json:"device_mapping,omitempty" db:"device_mapping" csv:"-"`
 }
 
+// DisplayName returns ComputerName if it isn't empty or HostName otherwise.
+func (h *Host) DisplayName() string {
+	if cn := h.ComputerName; cn != "" {
+		return cn
+	}
+	return h.Hostname
+}
+
 type HostIssues struct {
 	TotalIssuesCount     int `json:"total_issues_count" db:"total_issues_count" csv:"issues"` // when exporting in CSV, we want that value as the "issues" column
 	FailingPoliciesCount int `json:"failing_policies_count" db:"failing_policies_count" csv:"-"`
@@ -190,15 +227,17 @@ const (
 // set of hosts in the database. This structure is returned by the HostService
 // method GetHostSummary
 type HostSummary struct {
-	TeamID           *uint                  `json:"team_id,omitempty"`
-	TotalsHostsCount uint                   `json:"totals_hosts_count" db:"total"`
-	OnlineCount      uint                   `json:"online_count" db:"online"`
-	OfflineCount     uint                   `json:"offline_count" db:"offline"`
-	MIACount         uint                   `json:"mia_count" db:"mia"`
-	NewCount         uint                   `json:"new_count" db:"new"`
-	AllLinuxCount    uint                   `json:"all_linux_count"`
-	BuiltinLabels    []*LabelSummary        `json:"builtin_labels"`
-	Platforms        []*HostSummaryPlatform `json:"platforms"`
+	TeamID             *uint                  `json:"team_id,omitempty" db:"-"`
+	TotalsHostsCount   uint                   `json:"totals_hosts_count" db:"total"`
+	OnlineCount        uint                   `json:"online_count" db:"online"`
+	OfflineCount       uint                   `json:"offline_count" db:"offline"`
+	MIACount           uint                   `json:"mia_count" db:"mia"`
+	Missing30DaysCount uint                   `json:"missing_30_days_count" db:"missing_30_days_count"`
+	NewCount           uint                   `json:"new_count" db:"new"`
+	AllLinuxCount      uint                   `json:"all_linux_count" db:"-"`
+	LowDiskSpaceCount  *uint                  `json:"low_disk_space_count,omitempty" db:"low_disk_space"`
+	BuiltinLabels      []*LabelSummary        `json:"builtin_labels" db:"-"`
+	Platforms          []*HostSummaryPlatform `json:"platforms" db:"-"`
 }
 
 // HostSummaryPlatform represents the hosts statistics for a given platform,
@@ -246,12 +285,22 @@ func (h *Host) FleetPlatform() string {
 
 // HostLinuxOSs are the possible linux values for Host.Platform.
 var HostLinuxOSs = []string{
-	"linux", "ubuntu", "debian", "rhel", "centos", "sles", "kali", "gentoo", "amzn",
+	"linux", "ubuntu", "debian", "rhel", "centos", "sles", "kali", "gentoo", "amzn", "pop",
 }
 
 func IsLinux(hostPlatform string) bool {
 	for _, linuxPlatform := range HostLinuxOSs {
 		if linuxPlatform == hostPlatform {
+			return true
+		}
+	}
+	return false
+}
+
+func IsUnixLike(hostPlatform string) bool {
+	unixLikeOSs := append(HostLinuxOSs, "darwin")
+	for _, p := range unixLikeOSs {
+		if p == hostPlatform {
 			return true
 		}
 	}
@@ -314,6 +363,14 @@ type HostMDM struct {
 	InstalledFromDep bool   `db:"installed_from_dep" json:"-"`
 	MDMID            *uint  `db:"mdm_id" json:"-"`
 	Name             string `db:"name" json:"-"`
+}
+
+// HostMunkiIssue represents a single munki issue for a host.
+type HostMunkiIssue struct {
+	MunkiIssueID       uint      `db:"munki_issue_id" json:"id"`
+	Name               string    `db:"name" json:"name"`
+	IssueType          string    `db:"issue_type" json:"type"`
+	HostIssueCreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
 // List of well-known MDM solution names. Those correspond to names stored in
@@ -390,12 +447,26 @@ type HostBattery struct {
 }
 
 type MacadminsData struct {
-	Munki *HostMunkiInfo `json:"munki"`
-	MDM   *HostMDM       `json:"mobile_device_management"`
+	Munki       *HostMunkiInfo    `json:"munki"`
+	MDM         *HostMDM          `json:"mobile_device_management"`
+	MunkiIssues []*HostMunkiIssue `json:"munki_issues"`
 }
 
 type AggregatedMunkiVersion struct {
 	HostMunkiInfo
+	HostsCount int `json:"hosts_count" db:"hosts_count"`
+}
+
+// MunkiIssue represents a single munki issue, as returned by the list hosts
+// endpoint when a muniki issue ID is provided as filter.
+type MunkiIssue struct {
+	ID        uint   `json:"id" db:"id"`
+	Name      string `json:"name" db:"name"`
+	IssueType string `json:"type" db:"issue_type"`
+}
+
+type AggregatedMunkiIssue struct {
+	MunkiIssue
 	HostsCount int `json:"hosts_count" db:"hosts_count"`
 }
 
@@ -406,24 +477,32 @@ type AggregatedMDMStatus struct {
 	HostsCount                  int `json:"hosts_count" db:"hosts_count"`
 }
 
+// MDMSolution represents a single MDM solution, as returned by the list hosts
+// endpoint when an MDM Solution ID is provided as filter.
+type MDMSolution struct {
+	ID        uint   `json:"id" db:"id"`
+	Name      string `json:"name" db:"name"`
+	ServerURL string `json:"server_url" db:"server_url"`
+}
+
 type AggregatedMDMSolutions struct {
-	ID         uint   `json:"id,omitempty" db:"id"`
-	Name       string `json:"name,omitempty" db:"name"`
-	HostsCount int    `json:"hosts_count" db:"hosts_count"`
-	ServerURL  string `json:"server_url" db:"server_url"`
+	MDMSolution
+	HostsCount int `json:"hosts_count" db:"hosts_count"`
 }
 
 type AggregatedMacadminsData struct {
 	CountsUpdatedAt time.Time                `json:"counts_updated_at"`
 	MunkiVersions   []AggregatedMunkiVersion `json:"munki_versions"`
+	MunkiIssues     []AggregatedMunkiIssue   `json:"munki_issues"`
 	MDMStatus       AggregatedMDMStatus      `json:"mobile_device_management_enrollment_status"`
 	MDMSolutions    []AggregatedMDMSolutions `json:"mobile_device_management_solution"`
 }
 
 // HostShort is a minimal host representation returned when querying hosts.
 type HostShort struct {
-	ID       uint   `json:"id" db:"id"`
-	Hostname string `json:"hostname" db:"hostname"`
+	ID          uint   `json:"id" db:"id"`
+	Hostname    string `json:"hostname" db:"hostname"`
+	DisplayName string `json:"display_name" db:"display_name"`
 }
 
 type OSVersions struct {
@@ -445,7 +524,7 @@ type OSVersion struct {
 	// Platform is the platform of the operating system, e.g., "windows", "ubuntu", or "darwin".
 	Platform string `json:"platform"`
 	// ID is the unique id of the operating system.
-	ID uint `json:"os_id"`
+	ID uint `json:"os_id,omitempty"`
 }
 
 type HostDetailOptions struct {

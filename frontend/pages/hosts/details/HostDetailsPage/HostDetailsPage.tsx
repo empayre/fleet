@@ -9,14 +9,12 @@ import classnames from "classnames";
 import { pick } from "lodash";
 
 import PATHS from "router/paths";
-import configAPI from "services/entities/config";
 import hostAPI from "services/entities/hosts";
 import queryAPI from "services/entities/queries";
 import teamAPI, { ILoadTeamsResponse } from "services/entities/teams";
 import { AppContext } from "context/app";
 import { PolicyContext } from "context/policy";
 import { NotificationContext } from "context/notification";
-import { IConfig } from "interfaces/config";
 import {
   IHost,
   IDeviceMappingResponse,
@@ -44,6 +42,7 @@ import HostSummaryCard from "../cards/HostSummary";
 import AboutCard from "../cards/About";
 import AgentOptionsCard from "../cards/AgentOptions";
 import LabelsCard from "../cards/Labels";
+import MunkiIssuesCard from "../cards/MunkiIssues";
 import SoftwareCard from "../cards/Software";
 import UsersCard from "../cards/Users";
 import PoliciesCard from "../cards/Policies";
@@ -96,11 +95,12 @@ const HostDetailsPage = ({
 }: IHostDetailsProps): JSX.Element => {
   const hostIdFromURL = parseInt(host_id, 10);
   const {
+    config,
+    currentUser,
     isGlobalAdmin,
     isPremiumTier,
     isOnlyObserver,
     isGlobalMaintainer,
-    currentUser,
   } = useContext(AppContext);
   const {
     setLastEditedQueryName,
@@ -126,28 +126,23 @@ const HostDetailsPage = ({
     return false;
   };
 
-  const [showDeleteHostModal, setShowDeleteHostModal] = useState<boolean>(
-    false
-  );
-  const [showTransferHostModal, setShowTransferHostModal] = useState<boolean>(
-    false
-  );
-  const [showQueryHostModal, setShowQueryHostModal] = useState<boolean>(false);
-  const [showPolicyDetailsModal, setPolicyDetailsModal] = useState<boolean>(
-    false
-  );
-  const [showOSPolicyModal, setShowOSPolicyModal] = useState<boolean>(false);
+  const [showDeleteHostModal, setShowDeleteHostModal] = useState(false);
+  const [showTransferHostModal, setShowTransferHostModal] = useState(false);
+  const [showQueryHostModal, setShowQueryHostModal] = useState(false);
+  const [showPolicyDetailsModal, setPolicyDetailsModal] = useState(false);
+  const [showOSPolicyModal, setShowOSPolicyModal] = useState(false);
   const [selectedPolicy, setSelectedPolicy] = useState<IHostPolicy | null>(
     null
   );
+  const [isUpdatingHost, setIsUpdatingHost] = useState(false);
 
   const [refetchStartTime, setRefetchStartTime] = useState<number | null>(null);
-  const [showRefetchSpinner, setShowRefetchSpinner] = useState<boolean>(false);
+  const [showRefetchSpinner, setShowRefetchSpinner] = useState(false);
   const [packsState, setPacksState] = useState<IPackStats[]>();
   const [scheduleState, setScheduleState] = useState<IQueryStats[]>();
   const [hostSoftware, setHostSoftware] = useState<ISoftware[]>([]);
   const [usersState, setUsersState] = useState<{ username: string }[]>([]);
-  const [usersSearchString, setUsersSearchString] = useState<string>("");
+  const [usersSearchString, setUsersSearchString] = useState("");
 
   const { data: fleetQueries, error: fleetQueriesError } = useQuery<
     IFleetQueriesResponse,
@@ -200,14 +195,6 @@ const HostDetailsPage = ({
       select: (data: IMacadminsResponse) => data.macadmins,
     }
   );
-
-  const { data: hostSettings } = useQuery<
-    IConfig,
-    Error,
-    { enable_host_users: boolean; enable_software_inventory: boolean }
-  >(["config"], () => configAPI.loadAll(), {
-    select: (data: IConfig) => data.host_settings,
-  });
 
   const refetchExtensions = () => {
     deviceMapping !== null && refetchDeviceMapping();
@@ -302,6 +289,10 @@ const HostDetailsPage = ({
     }
   );
 
+  const featuresConfig = host?.team_id
+    ? teams?.find((t) => t.id === host.team_id)?.features
+    : config?.features;
+
   useEffect(() => {
     setUsersState(() => {
       return (
@@ -327,7 +318,7 @@ const HostDetailsPage = ({
       "percent_disk_space_available",
       "gigs_disk_space_available",
       "team_name",
-      "hostname",
+      "display_name",
     ])
   );
 
@@ -389,18 +380,23 @@ const HostDetailsPage = ({
 
   const onDestroyHost = async () => {
     if (host) {
+      setIsUpdatingHost(true);
       try {
         await hostAPI.destroy(host);
         renderFlash(
           "success",
-          `Host "${host.hostname}" was successfully deleted.`
+          `Host "${host.display_name}" was successfully deleted.`
         );
         router.push(PATHS.MANAGE_HOSTS);
       } catch (error) {
         console.log(error);
-        renderFlash("error", `Host "${host.hostname}" could not be deleted.`);
+        renderFlash(
+          "error",
+          `Host "${host.display_name}" could not be deleted.`
+        );
       } finally {
         setShowDeleteHostModal(false);
+        setIsUpdatingHost(false);
       }
     }
   };
@@ -421,18 +417,16 @@ const HostDetailsPage = ({
         });
       } catch (error) {
         console.log(error);
-        renderFlash("error", `Host "${host.hostname}" refetch error`);
+        renderFlash("error", `Host "${host.display_name}" refetch error`);
         setShowRefetchSpinner(false);
       }
     }
   };
 
   const onLabelClick = (label: ILabel) => {
-    if (label.name === "All Hosts") {
-      return router.push(PATHS.MANAGE_HOSTS);
-    }
-
-    return router.push(`${PATHS.MANAGE_HOSTS}/labels/${label.id}`);
+    return label.name === "All Hosts"
+      ? router.push(PATHS.MANAGE_HOSTS)
+      : router.push(PATHS.MANAGE_HOSTS_LABEL(label.id));
   };
 
   const onQueryHostCustom = () => {
@@ -447,6 +441,8 @@ const HostDetailsPage = ({
   };
 
   const onTransferHostSubmit = async (team: ITeam) => {
+    setIsUpdatingHost(true);
+
     const teamId = typeof team.id === "number" ? team.id : null;
 
     try {
@@ -463,6 +459,8 @@ const HostDetailsPage = ({
     } catch (error) {
       console.log(error);
       renderFlash("error", "Could not transfer host. Please try again.");
+    } finally {
+      setIsUpdatingHost(false);
     }
   };
 
@@ -536,7 +534,7 @@ const HostDetailsPage = ({
   }
 
   const statusClassName = classnames("status", `status--${host?.status}`);
-  const failingPoliciesCount = titleData?.issues;
+  const failingPoliciesCount = host?.issues.failing_policies_count || 0;
 
   return (
     <MainContent className={baseClass}>
@@ -600,7 +598,7 @@ const HostDetailsPage = ({
                 usersState={usersState}
                 isLoading={isLoadingHost}
                 onUsersTableSearchChange={onUsersTableSearchChange}
-                hostUsersEnabled={hostSettings?.enable_host_users}
+                hostUsersEnabled={featuresConfig?.enable_host_users}
               />
             </TabPanel>
             <TabPanel>
@@ -608,10 +606,17 @@ const HostDetailsPage = ({
                 isLoading={isLoadingHost}
                 software={hostSoftware}
                 softwareInventoryEnabled={
-                  hostSettings?.enable_software_inventory
+                  featuresConfig?.enable_software_inventory
                 }
                 deviceType={host?.platform === "darwin" ? "macos" : ""}
               />
+              {macadmins && (
+                <MunkiIssuesCard
+                  isLoading={isLoadingHost}
+                  munkiIssues={macadmins.munki_issues}
+                  deviceType={host?.platform === "darwin" ? "macos" : ""}
+                />
+              )}
             </TabPanel>
             <TabPanel>
               <ScheduleCard
@@ -634,7 +639,8 @@ const HostDetailsPage = ({
           <DeleteHostModal
             onCancel={() => setShowDeleteHostModal(false)}
             onSubmit={onDestroyHost}
-            hostName={host?.hostname}
+            hostName={host?.display_name}
+            isUpdatingHost={isUpdatingHost}
           />
         )}
         {showQueryHostModal && host && (
@@ -653,6 +659,7 @@ const HostDetailsPage = ({
             onSubmit={onTransferHostSubmit}
             teams={teams || []}
             isGlobalAdmin={isGlobalAdmin as boolean}
+            isUpdatingHost={isUpdatingHost}
           />
         )}
         {!!host && showPolicyDetailsModal && (

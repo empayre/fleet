@@ -1,7 +1,6 @@
-name: Test native tooling packaging
-
 # This workflow tests packaging of Fleet-osquery with the
-# `fleetdm/fleetctl` Docker image. 
+# `fleetdm/fleetctl` Docker image.
+name: Test native tooling packaging
 
 on:
   push:
@@ -10,12 +9,22 @@ on:
       - patch-*
   pull_request:
     paths:
-      - '**.go'
+      - 'cmd/fleetctl/**.go'
+      - 'pkg/**.go'
+      - 'server/service/**.go'
+      - 'server/context/**.go'
+      - 'orbit/**.go'
+      - 'ee/fleetctl/**.go'
       - 'tools/fleetctl-docker/**'
       - 'tools/wix-docker/**'
       - 'tools/bomutils-docker/**'
       - '.github/workflows/test-native-tooling-packaging.yml'
   workflow_dispatch: # Manual
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
 
 permissions:
   contents: read
@@ -31,12 +40,12 @@ jobs:
 
     steps:
     - name: Install Go
-      uses: actions/setup-go@84cbf8094393cdc5fe1fe1671ff2647332956b1a # v2
+      uses: actions/setup-go@268d8c0ca0432bb2cf416faae41297df9d262d7f # v2
       with:
         go-version: ${{ matrix.go-version }}
 
     - name: Checkout Code
-      uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+      uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
 
     - name: Install Go Dependencies
       run: make deps-go
@@ -49,10 +58,10 @@ jobs:
 
     - name: Build DEB with Fleet Desktop
       run: docker run -v "$(pwd):/build" fleetdm/fleetctl package --type deb --enroll-secret=foo --fleet-url=https://localhost:8080 --fleet-desktop
-      
+
     - name: Build RPM
       run: docker run -v "$(pwd):/build" fleetdm/fleetctl --type rpm --enroll-secret=foo --fleet-url=https://localhost:8080
-      
+
     - name: Build RPM with Fleet Desktop
       run: docker run -v "$(pwd):/build" fleetdm/fleetctl package --type rpm --enroll-secret=foo --fleet-url=https://localhost:8080 --fleet-desktop
 

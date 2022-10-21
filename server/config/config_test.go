@@ -79,7 +79,8 @@ func TestConfigRoundtrip(t *testing.T) {
 	require.Nil(t, err)
 
 	// Ensure the read config is the same as the original
-	assert.Equal(t, *original, man.LoadConfig())
+	actual := man.LoadConfig()
+	assert.Equal(t, *original, actual)
 }
 
 func TestConfigOsqueryAsync(t *testing.T) {
@@ -341,10 +342,10 @@ func TestToTLSConfig(t *testing.T) {
 		filepath.Join(dir, "cert"),
 		filepath.Join(dir, "key"),
 		filepath.Join(dir, "garbage")
-	require.NoError(t, os.WriteFile(caFile, testCA, 0600))
-	require.NoError(t, os.WriteFile(certFile, testCert, 0600))
-	require.NoError(t, os.WriteFile(keyFile, testKey, 0600))
-	require.NoError(t, os.WriteFile(garbageFile, []byte("zzzz"), 0600))
+	require.NoError(t, os.WriteFile(caFile, testCA, 0o600))
+	require.NoError(t, os.WriteFile(certFile, testCert, 0o600))
+	require.NoError(t, os.WriteFile(keyFile, testKey, 0o600))
+	require.NoError(t, os.WriteFile(garbageFile, []byte("zzzz"), 0o600))
 
 	cases := []struct {
 		name        string

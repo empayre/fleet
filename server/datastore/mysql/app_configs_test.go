@@ -28,6 +28,7 @@ func TestAppConfig(t *testing.T) {
 		{"EnrollSecretRoundtrip", testAppConfigEnrollSecretRoundtrip},
 		{"EnrollSecretUniqueness", testAppConfigEnrollSecretUniqueness},
 		{"Defaults", testAppConfigDefaults},
+		{"Backwards Compatibility", testAppConfigBackwardsCompatibility},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -77,7 +78,7 @@ func testAppConfigOrgInfo(t *testing.T, ds *Datastore) {
 	info2.SSOSettings.MetadataURL = "https://idp.com/metadata.xml"
 	info2.SSOSettings.IssuerURI = "https://idp.issuer.com"
 	info2.SSOSettings.IDPName = "My IDP"
-	info2.HostSettings.EnableSoftwareInventory = true
+	info2.Features.EnableSoftwareInventory = true
 
 	err = ds.SaveAppConfig(context.Background(), info2)
 	require.Nil(t, err)
@@ -120,7 +121,7 @@ func testAppConfigAdditionalQueries(t *testing.T, ds *Datastore) {
 			OrgName:    "Test",
 			OrgLogoURL: "localhost:8080/logo.png",
 		},
-		HostSettings: fleet.HostSettings{
+		Features: fleet.Features{
 			AdditionalQueries: additional,
 		},
 	}
@@ -128,68 +129,125 @@ func testAppConfigAdditionalQueries(t *testing.T, ds *Datastore) {
 	_, err := ds.NewAppConfig(context.Background(), info)
 	require.Error(t, err)
 
-	info.HostSettings.AdditionalQueries = ptr.RawMessage(json.RawMessage(`{}`))
+	info.Features.AdditionalQueries = ptr.RawMessage(json.RawMessage(`{}`))
 	info, err = ds.NewAppConfig(context.Background(), info)
 	require.NoError(t, err)
 
-	info.HostSettings.AdditionalQueries = ptr.RawMessage(json.RawMessage(`{"foo": "bar"}`))
+	info.Features.AdditionalQueries = ptr.RawMessage(json.RawMessage(`{"foo": "bar"}`))
 	info, err = ds.NewAppConfig(context.Background(), info)
 	require.NoError(t, err)
-	rawJson := *info.HostSettings.AdditionalQueries
+	rawJson := *info.Features.AdditionalQueries
 	assert.JSONEq(t, `{"foo":"bar"}`, string(rawJson))
 }
 
 func testAppConfigEnrollSecrets(t *testing.T, ds *Datastore) {
+	ctx := context.Background()
 	defer TruncateTables(t, ds)
 
-	team1, err := ds.NewTeam(context.Background(), &fleet.Team{Name: "team1"})
+	team1, err := ds.NewTeam(ctx, &fleet.Team{Name: "team1"})
 	require.NoError(t, err)
 
-	secret, err := ds.VerifyEnrollSecret(context.Background(), "missing")
+	secret, err := ds.VerifyEnrollSecret(ctx, "missing")
 	assert.Error(t, err)
 	assert.Nil(t, secret)
 
-	err = ds.ApplyEnrollSecrets(context.Background(), &team1.ID,
+	err = ds.ApplyEnrollSecrets(ctx, &team1.ID,
 		[]*fleet.EnrollSecret{
 			{Secret: "one_secret", TeamID: &team1.ID},
 		},
 	)
 	assert.NoError(t, err)
 
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "one")
+	// keep the created-at timestamp of the team's secret
+	t1Secrets, err := ds.GetEnrollSecrets(ctx, &team1.ID)
+	require.NoError(t, err)
+	require.Len(t, t1Secrets, 1)
+	t1CreatedAt := t1Secrets[0].CreatedAt
+
+	secret, err = ds.VerifyEnrollSecret(ctx, "one")
 	assert.Error(t, err, "secret should not match")
 	assert.Nil(t, secret, "secret should be nil")
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "one_secret")
+	secret, err = ds.VerifyEnrollSecret(ctx, "one_secret")
 	assert.NoError(t, err)
 	assert.Equal(t, &team1.ID, secret.TeamID)
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "two_secret")
+	secret, err = ds.VerifyEnrollSecret(ctx, "two_secret")
 	assert.Error(t, err)
 	assert.Nil(t, secret)
 
 	// Add global secret
-	err = ds.ApplyEnrollSecrets(
-		context.Background(),
-		nil,
+	err = ds.ApplyEnrollSecrets(ctx, nil,
 		[]*fleet.EnrollSecret{
 			{Secret: "two_secret"},
 		},
 	)
 	assert.NoError(t, err)
 
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "one_secret")
+	// keep the created-at timestamp of the global secret
+	globalSecrets, err := ds.GetEnrollSecrets(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, globalSecrets, 1)
+	globalCreatedAt := globalSecrets[0].CreatedAt
+
+	secret, err = ds.VerifyEnrollSecret(ctx, "one_secret")
 	assert.NoError(t, err)
 	assert.Equal(t, &team1.ID, secret.TeamID)
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "two_secret")
+	secret, err = ds.VerifyEnrollSecret(ctx, "two_secret")
 	assert.NoError(t, err)
 	assert.Equal(t, (*uint)(nil), secret.TeamID)
 
-	// Remove team secret
-	err = ds.ApplyEnrollSecrets(context.Background(), &team1.ID, []*fleet.EnrollSecret{})
+	// ensure mysql returns a distinct timestamp
+	time.Sleep(time.Second)
+
+	// apply a new team secret, keeping the old one
+	err = ds.ApplyEnrollSecrets(ctx, &team1.ID,
+		[]*fleet.EnrollSecret{
+			{Secret: "one_secret", TeamID: &team1.ID},
+			{Secret: "three_secret", TeamID: &team1.ID},
+		},
+	)
+	require.NoError(t, err)
+
+	// apply a new global secret, keeping the old one
+	err = ds.ApplyEnrollSecrets(ctx, nil,
+		[]*fleet.EnrollSecret{
+			{Secret: "two_secret"},
+			{Secret: "four_secret"},
+		},
+	)
+	require.NoError(t, err)
+
+	// check that old secrets kept their original created-at timestamp
+	t1Secrets, err = ds.GetEnrollSecrets(ctx, &team1.ID)
+	require.NoError(t, err)
+	require.Len(t, t1Secrets, 2)
+	sort.Slice(t1Secrets, func(i, j int) bool {
+		l, r := t1Secrets[i], t1Secrets[j]
+		return l.CreatedAt.Before(r.CreatedAt)
+	})
+	assert.Equal(t, t1CreatedAt, t1Secrets[0].CreatedAt)
+	assert.True(t, t1Secrets[1].CreatedAt.After(t1CreatedAt))
+	assert.Equal(t, "one_secret", t1Secrets[0].Secret)
+	assert.Equal(t, "three_secret", t1Secrets[1].Secret)
+
+	globalSecrets, err = ds.GetEnrollSecrets(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, globalSecrets, 2)
+	sort.Slice(globalSecrets, func(i, j int) bool {
+		l, r := globalSecrets[i], globalSecrets[j]
+		return l.CreatedAt.Before(r.CreatedAt)
+	})
+	assert.Equal(t, globalCreatedAt, globalSecrets[0].CreatedAt)
+	assert.True(t, globalSecrets[1].CreatedAt.After(globalCreatedAt))
+	assert.Equal(t, "two_secret", globalSecrets[0].Secret)
+	assert.Equal(t, "four_secret", globalSecrets[1].Secret)
+
+	// Remove team secrets
+	err = ds.ApplyEnrollSecrets(ctx, &team1.ID, []*fleet.EnrollSecret{})
 	assert.NoError(t, err)
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "one_secret")
+	secret, err = ds.VerifyEnrollSecret(ctx, "one_secret")
 	assert.Error(t, err)
 	assert.Nil(t, secret)
-	secret, err = ds.VerifyEnrollSecret(context.Background(), "two_secret")
+	secret, err = ds.VerifyEnrollSecret(ctx, "two_secret")
 	assert.NoError(t, err)
 	assert.Equal(t, (*uint)(nil), secret.TeamID)
 }
@@ -279,12 +337,12 @@ func testAppConfigDefaults(t *testing.T, ds *Datastore) {
 	require.NoError(t, err)
 	require.Equal(t, 24*time.Hour, ac.WebhookSettings.Interval.Duration)
 	require.False(t, ac.WebhookSettings.HostStatusWebhook.Enable)
-	require.True(t, ac.HostSettings.EnableHostUsers)
-	require.False(t, ac.HostSettings.EnableSoftwareInventory)
+	require.True(t, ac.Features.EnableHostUsers)
+	require.False(t, ac.Features.EnableSoftwareInventory)
 
 	_, err = ds.writer.Exec(
 		insertAppConfigQuery,
-		`{"webhook_settings": {"interval": "12h"}, "host_settings": {"enable_host_users": false}}`,
+		`{"webhook_settings": {"interval": "12h"}, "features": {"enable_host_users": false}}`,
 	)
 	require.NoError(t, err)
 
@@ -292,6 +350,27 @@ func testAppConfigDefaults(t *testing.T, ds *Datastore) {
 	require.NoError(t, err)
 
 	require.Equal(t, 12*time.Hour, ac.WebhookSettings.Interval.Duration)
-	require.False(t, ac.HostSettings.EnableHostUsers)
-	require.False(t, ac.HostSettings.EnableSoftwareInventory)
+	require.False(t, ac.Features.EnableHostUsers)
+	require.False(t, ac.Features.EnableSoftwareInventory)
+}
+
+func testAppConfigBackwardsCompatibility(t *testing.T, ds *Datastore) {
+	insertAppConfigQuery := `INSERT INTO app_config_json(json_value) VALUES(?) ON DUPLICATE KEY UPDATE json_value = VALUES(json_value)`
+	_, err := ds.writer.Exec(insertAppConfigQuery, `
+{
+  "host_settings": {
+    "enable_host_users": false,
+    "enable_software_inventory": true,
+    "additional_queries": { "foo": "bar" }
+  }
+}`)
+
+	require.NoError(t, err)
+
+	ac, err := ds.AppConfig(context.Background())
+	require.NoError(t, err)
+
+	require.False(t, ac.Features.EnableHostUsers)
+	require.True(t, ac.Features.EnableSoftwareInventory)
+	require.NotNil(t, ac.Features.AdditionalQueries)
 }

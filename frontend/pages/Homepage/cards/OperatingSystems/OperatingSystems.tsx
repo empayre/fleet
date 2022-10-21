@@ -5,7 +5,7 @@ import {
   OS_END_OF_LIFE_LINK_BY_PLATFORM,
   OS_VENDOR_BY_PLATFORM,
 } from "interfaces/operating_system";
-import { IOsqueryPlatform } from "interfaces/platform";
+import { ISelectedPlatform } from "interfaces/platform";
 import {
   getOSVersions,
   IGetOSVersionsQueryKey,
@@ -19,13 +19,13 @@ import Spinner from "components/Spinner";
 import TableDataError from "components/DataError";
 import LastUpdatedText from "components/LastUpdatedText";
 
-import ExternalURLIcon from "../../../../../assets/images/icon-external-url-12x12@2x.png";
+import ExternalLinkIcon from "../../../../../assets/images/icon-external-link-12x12@2x.png";
 
 import generateTableHeaders from "./OperatingSystemsTableConfig";
 
 interface IOperatingSystemsCardProps {
   currentTeamId: number | undefined;
-  selectedPlatform: IOsqueryPlatform;
+  selectedPlatform: ISelectedPlatform;
   showTitle: boolean;
   setShowTitle: (showTitle: boolean) => void;
   setTitleDetail?: (content: JSX.Element | string | null) => void;
@@ -37,7 +37,7 @@ const DEFAULT_SORT_HEADER = "hosts_count";
 const PAGE_SIZE = 8;
 const baseClass = "operating-systems";
 
-const EmptyOperatingSystems = (platform: IOsqueryPlatform): JSX.Element => (
+const EmptyOperatingSystems = (platform: ISelectedPlatform): JSX.Element => (
   <div className={`${baseClass}__empty-os`}>
     <h1>{`No${
       ` ${PLATFORM_DISPLAY_NAMES[platform]}` || ""
@@ -66,7 +66,7 @@ const OperatingSystems = ({
     [
       {
         scope: "os_versions",
-        platform: selectedPlatform,
+        platform: selectedPlatform !== "all" ? selectedPlatform : undefined,
         teamId: currentTeamId,
       },
     ],
@@ -90,11 +90,15 @@ const OperatingSystems = ({
         {OS_VENDOR_BY_PLATFORM[selectedPlatform]} releases updates and fixes for
         supported operating systems.{" "}
         <a
+          href={OS_END_OF_LIFE_LINK_BY_PLATFORM[selectedPlatform]}
           target="_blank"
           rel="noreferrer noopener"
-          href={OS_END_OF_LIFE_LINK_BY_PLATFORM[selectedPlatform]}
         >
-          See supported operating systems <img src={ExternalURLIcon} alt="" />
+          See supported operating{" "}
+          <span className="no-wrap">
+            systems
+            <img alt="Open external link" src={ExternalLinkIcon} />
+          </span>
         </a>
       </p>
     ) : null;

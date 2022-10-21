@@ -642,23 +642,17 @@ func (si *softwareIterator) Next() bool {
 }
 
 // AllSoftwareWithoutCPEIterator Returns an iterator for the 'software' table, filtering out
-// software entries with CPEs and from the platforms included in the 'excludedPlatforms' param.
-func (ds *Datastore) AllSoftwareWithoutCPEIterator(ctx context.Context, excludedPlatforms []string) (fleet.SoftwareIterator, error) {
+// software entries with CPEs and from the sources included in the 'excludedSources' param.
+func (ds *Datastore) AllSoftwareWithoutCPEIterator(ctx context.Context, excludedSources []string) (fleet.SoftwareIterator, error) {
 	var err error
 	var args []interface{}
 
 	stmt := `SELECT s.* FROM software s LEFT JOIN software_cpe sc ON (s.id=sc.software_id) WHERE sc.id IS NULL`
 	// The rows.Close call is done by the caller once iteration using the
 	// returned fleet.SoftwareIterator is done.
-	if excludedPlatforms != nil {
-		stmt += ` AND s.id NOT IN (
-			SELECT software_id
-			FROM host_software hs
-			INNER JOIN hosts h on hs.host_id = h.id
-			WHERE h.platform IN (?)
-		)`
-
-		stmt, args, err = sqlx.In(stmt, excludedPlatforms)
+	if excludedSources != nil {
+		stmt += ` AND s.source NOT IN (?)`
+		stmt, args, err = sqlx.In(stmt, excludedSources)
 		if err != nil {
 			return nil, ctxerr.Wrap(ctx, err, "loads cpes")
 		}
@@ -686,27 +680,13 @@ func addCPEForSoftwareDB(ctx context.Context, exec sqlx.ExecerContext, software 
 	return uint(id), nil
 }
 
-func (ds *Datastore) ListSoftwareCPEs(ctx context.Context, excludedPlatforms []string) ([]fleet.SoftwareCPE, error) {
+func (ds *Datastore) ListSoftwareCPEs(ctx context.Context) ([]fleet.SoftwareCPE, error) {
 	var result []fleet.SoftwareCPE
 
 	var err error
 	var args []interface{}
 
 	stmt := `SELECT id, software_id, cpe FROM software_cpe`
-
-	if excludedPlatforms != nil {
-		stmt += ` WHERE software_id NOT IN (
-			SELECT software_id
-			FROM host_software hs
-			INNER JOIN hosts h on hs.host_id = h.id
-			WHERE h.platform IN (?)
-		)`
-
-		stmt, args, err = sqlx.In(stmt, excludedPlatforms)
-		if err != nil {
-			return nil, ctxerr.Wrap(ctx, err, "loads cpes")
-		}
-	}
 	err = sqlx.SelectContext(ctx, ds.reader, &result, stmt, args...)
 
 	if err != nil {
@@ -755,12 +735,7 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 			"s.vendor",
 			"s.arch",
 			"scv.cve",
-		).
-		Join( // filter software that is not associated with any hosts
-			goqu.I("host_software").As("hs"),
-			goqu.On(
-				goqu.I("hs.software_id").Eq(goqu.I("s.id")),
-			),
+			goqu.COALESCE(goqu.I("scp.cpe"), "").As("generated_cpe"),
 		).
 		LeftJoin(
 			goqu.I("software_cpe").As("scp"),
@@ -787,6 +762,8 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 	}
 
 	q = q.Where(goqu.I("s.id").Eq(id))
+	// filter software that is not associated with any hosts
+	q = q.Where(goqu.L("EXISTS (SELECT 1 FROM host_software WHERE software_id = ? LIMIT 1)", id))
 
 	sql, args, err := q.ToSQL()
 	if err != nil {
@@ -975,7 +952,8 @@ func (ds *Datastore) HostsBySoftwareIDs(ctx context.Context, softwareIDs []uint)
 	queryStmt := `
     SELECT 
       h.id,
-      h.hostname
+      h.hostname,
+      if(h.computer_name = '', h.hostname, h.computer_name) display_name
     FROM
       hosts h
     INNER JOIN
@@ -1001,8 +979,10 @@ func (ds *Datastore) HostsBySoftwareIDs(ctx context.Context, softwareIDs []uint)
 
 func (ds *Datastore) HostsByCVE(ctx context.Context, cve string) ([]*fleet.HostShort, error) {
 	query := `
-SELECT
-    DISTINCT(h.id), h.hostname
+SELECT DISTINCT
+    	(h.id),
+    	h.hostname,
+    	if(h.computer_name = '', h.hostname, h.computer_name) display_name
 FROM
     hosts h
     INNER JOIN host_software hs ON h.id = hs.host_id
@@ -1134,7 +1114,7 @@ func (ds *Datastore) ListSoftwareForVulnDetection(
 
 	stmt := dialect.
 		From(goqu.T("software").As("s")).
-		Join(
+		LeftJoin(
 			goqu.T("software_cpe").As("cpe"),
 			goqu.On(goqu.Ex{
 				"s.id": goqu.I("cpe.software_id"),
@@ -1152,7 +1132,7 @@ func (ds *Datastore) ListSoftwareForVulnDetection(
 			goqu.I("s.version"),
 			goqu.I("s.release"),
 			goqu.I("s.arch"),
-			goqu.I("cpe.cpe").As("generated_cpe"),
+			goqu.COALESCE(goqu.I("cpe.cpe"), "").As("generated_cpe"),
 		).
 		Where(goqu.C("host_id").Eq(hostID))
 

@@ -138,9 +138,9 @@ const SelectTargets = ({
 
   const [labels, setLabels] = useState<ILabelsByType | null>(null);
   const [inputTabIndex, setInputTabIndex] = useState<number | null>(null);
-  const [searchText, setSearchText] = useState<string>("");
-  const [debouncedSearchText, setDebouncedSearchText] = useState<string>("");
-  const [isDebouncing, setIsDebouncing] = useState<boolean>(false);
+  const [searchText, setSearchText] = useState("");
+  const [debouncedSearchText, setDebouncedSearchText] = useState("");
+  const [isDebouncing, setIsDebouncing] = useState(false);
 
   const debounceSearch = useDebouncedCallback(
     (search: string) => {
@@ -325,7 +325,12 @@ const SelectTargets = ({
     if (isFetchingCounts) {
       return (
         <>
-          <Spinner small />
+          <Spinner
+            size={"x-small"}
+            includeContainer={false}
+            centered={false}
+            className={`${baseClass}__count-spinner`}
+          />
           <i style={{ color: "#8b8fa2" }}>Counting hosts</i>
         </>
       );
@@ -348,7 +353,8 @@ const SelectTargets = ({
 
     return (
       <>
-        <span>{total}</span>&nbsp;hosts targeted&nbsp; ({onlinePercentage}
+        <span>{total}</span>&nbsp;host{total > 1 ? `s` : ``} targeted&nbsp; (
+        {onlinePercentage}
         %&nbsp;
         <TooltipWrapper
           tipContent={`Hosts are online if they<br /> have recently checked <br />into Fleet.`}

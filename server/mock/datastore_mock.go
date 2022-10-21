@@ -161,7 +161,7 @@ type CountEnrolledHostsFunc func(ctx context.Context) (int, error)
 
 type CleanupIncomingHostsFunc func(ctx context.Context, now time.Time) ([]uint, error)
 
-type GenerateHostStatusStatisticsFunc func(ctx context.Context, filter fleet.TeamFilter, now time.Time, platform *string) (*fleet.HostSummary, error)
+type GenerateHostStatusStatisticsFunc func(ctx context.Context, filter fleet.TeamFilter, now time.Time, platform *string, lowDiskSpace *int) (*fleet.HostSummary, error)
 
 type HostIDsByNameFunc func(ctx context.Context, filter fleet.TeamFilter, hostnames []string) ([]uint, error)
 
@@ -183,17 +183,23 @@ type ListHostDeviceMappingFunc func(ctx context.Context, id uint) ([]*fleet.Host
 
 type ListHostBatteriesFunc func(ctx context.Context, id uint) ([]*fleet.HostBattery, error)
 
-type LoadHostByDeviceAuthTokenFunc func(ctx context.Context, authToken string) (*fleet.Host, error)
+type LoadHostByDeviceAuthTokenFunc func(ctx context.Context, authToken string, tokenTTL time.Duration) (*fleet.Host, error)
 
 type SetOrUpdateDeviceAuthTokenFunc func(ctx context.Context, hostID uint, authToken string) error
 
+type FailingPoliciesCountFunc func(ctx context.Context, host *fleet.Host) (uint, error)
+
 type ListPoliciesForHostFunc func(ctx context.Context, host *fleet.Host) ([]*fleet.HostPolicy, error)
 
-type GetMunkiVersionFunc func(ctx context.Context, hostID uint) (string, error)
+type GetHostMunkiVersionFunc func(ctx context.Context, hostID uint) (string, error)
 
-type GetMDMFunc func(ctx context.Context, hostID uint) (*fleet.HostMDM, error)
+type GetHostMunkiIssuesFunc func(ctx context.Context, hostID uint) ([]*fleet.HostMunkiIssue, error)
+
+type GetHostMDMFunc func(ctx context.Context, hostID uint) (*fleet.HostMDM, error)
 
 type AggregatedMunkiVersionFunc func(ctx context.Context, teamID *uint) ([]fleet.AggregatedMunkiVersion, time.Time, error)
+
+type AggregatedMunkiIssuesFunc func(ctx context.Context, teamID *uint) ([]fleet.AggregatedMunkiIssue, time.Time, error)
 
 type AggregatedMDMStatusFunc func(ctx context.Context, teamID *uint) (fleet.AggregatedMDMStatus, time.Time, error)
 
@@ -201,7 +207,11 @@ type AggregatedMDMSolutionsFunc func(ctx context.Context, teamID *uint) ([]fleet
 
 type GenerateAggregatedMunkiAndMDMFunc func(ctx context.Context) error
 
-type OSVersionsFunc func(ctx context.Context, teamID *uint, platform *string, osID *uint) (*fleet.OSVersions, error)
+type GetMunkiIssueFunc func(ctx context.Context, munkiIssueID uint) (*fleet.MunkiIssue, error)
+
+type GetMDMSolutionFunc func(ctx context.Context, mdmID uint) (*fleet.MDMSolution, error)
+
+type OSVersionsFunc func(ctx context.Context, teamID *uint, platform *string, name *string, version *string) (*fleet.OSVersions, error)
 
 type UpdateOSVersionsFunc func(ctx context.Context) error
 
@@ -297,7 +307,7 @@ type AllSoftwareWithoutCPEIteratorFunc func(ctx context.Context, excludedPlatfor
 
 type AddCPEForSoftwareFunc func(ctx context.Context, software fleet.Software, cpe string) error
 
-type ListSoftwareCPEsFunc func(ctx context.Context, excludedPlatforms []string) ([]fleet.SoftwareCPE, error)
+type ListSoftwareCPEsFunc func(ctx context.Context) ([]fleet.SoftwareCPE, error)
 
 type InsertVulnerabilitiesFunc func(ctx context.Context, vulns []fleet.SoftwareVulnerability, source fleet.VulnerabilitySource) (int64, error)
 
@@ -328,6 +338,8 @@ type ListActivitiesFunc func(ctx context.Context, opt fleet.ListOptions) ([]*fle
 type ShouldSendStatisticsFunc func(ctx context.Context, frequency time.Duration, config config.FleetConfig, license *fleet.LicenseInfo) (fleet.StatisticsPayload, bool, error)
 
 type RecordStatisticsSentFunc func(ctx context.Context) error
+
+type CleanupStatisticsFunc func(ctx context.Context) error
 
 type ApplyPolicySpecsFunc func(ctx context.Context, authorID uint, specs []*fleet.PolicySpec) error
 
@@ -363,13 +375,17 @@ type DeleteSoftwareVulnerabilitiesFunc func(ctx context.Context, vulnerabilities
 
 type NewTeamPolicyFunc func(ctx context.Context, teamID uint, authorID *uint, args fleet.PolicyPayload) (*fleet.Policy, error)
 
-type ListTeamPoliciesFunc func(ctx context.Context, teamID uint) ([]*fleet.Policy, error)
+type ListTeamPoliciesFunc func(ctx context.Context, teamID uint) (teamPolicies []*fleet.Policy, inheritedPolicies []*fleet.Policy, err error)
 
 type DeleteTeamPoliciesFunc func(ctx context.Context, teamID uint, ids []uint) ([]uint, error)
 
 type TeamPolicyFunc func(ctx context.Context, teamID uint, policyID uint) (*fleet.Policy, error)
 
 type CleanupPolicyMembershipFunc func(ctx context.Context, now time.Time) error
+
+type IncrementPolicyViolationDaysFunc func(ctx context.Context) error
+
+type InitializePolicyViolationDaysFunc func(ctx context.Context) error
 
 type LockFunc func(ctx context.Context, name string, owner string, expiration time.Duration) (bool, error)
 
@@ -383,11 +399,15 @@ type UpdateQueryAggregatedStatsFunc func(ctx context.Context) error
 
 type LoadHostByNodeKeyFunc func(ctx context.Context, nodeKey string) (*fleet.Host, error)
 
+type LoadHostByOrbitNodeKeyFunc func(ctx context.Context, nodeKey string) (*fleet.Host, error)
+
 type HostLiteFunc func(ctx context.Context, hostID uint) (*fleet.Host, error)
 
 type UpdateHostOsqueryIntervalsFunc func(ctx context.Context, hostID uint, intervals fleet.HostOsqueryIntervals) error
 
 type TeamAgentOptionsFunc func(ctx context.Context, teamID uint) (*json.RawMessage, error)
+
+type TeamFeaturesFunc func(ctx context.Context, teamID uint) (*fleet.Features, error)
 
 type SaveHostPackStatsFunc func(ctx context.Context, hostID uint, stats []fleet.PackStats) error
 
@@ -411,9 +431,11 @@ type SaveHostUsersFunc func(ctx context.Context, hostID uint, users []fleet.Host
 
 type SaveHostAdditionalFunc func(ctx context.Context, hostID uint, additional *json.RawMessage) error
 
-type SetOrUpdateMunkiVersionFunc func(ctx context.Context, hostID uint, version string) error
+type SetOrUpdateMunkiInfoFunc func(ctx context.Context, hostID uint, version string, errors []string, warnings []string) error
 
 type SetOrUpdateMDMDataFunc func(ctx context.Context, hostID uint, enrolled bool, serverURL string, installedFromDep bool) error
+
+type SetOrUpdateHostDisksSpaceFunc func(ctx context.Context, hostID uint, gigsAvailable float64, percentAvailable float64) error
 
 type ReplaceHostDeviceMappingFunc func(ctx context.Context, id uint, mappings []*fleet.HostDeviceMapping) error
 
@@ -422,6 +444,8 @@ type ReplaceHostBatteriesFunc func(ctx context.Context, id uint, mappings []*fle
 type VerifyEnrollSecretFunc func(ctx context.Context, secret string) (*fleet.EnrollSecret, error)
 
 type EnrollHostFunc func(ctx context.Context, osqueryHostId string, nodeKey string, teamID *uint, cooldown time.Duration) (*fleet.Host, error)
+
+type EnrollOrbitFunc func(ctx context.Context, hardwareUUID string, orbitNodeKey string, teamID *uint) (*fleet.Host, error)
 
 type SerialUpdateHostFunc func(ctx context.Context, host *fleet.Host) error
 
@@ -434,6 +458,30 @@ type UpdateJobFunc func(ctx context.Context, id uint, job *fleet.Job) (*fleet.Jo
 type InnoDBStatusFunc func(ctx context.Context) (string, error)
 
 type ProcessListFunc func(ctx context.Context) ([]fleet.MySQLProcess, error)
+
+type InsertWindowsUpdatesFunc func(ctx context.Context, hostID uint, updates []fleet.WindowsUpdate) error
+
+type NewMDMAppleEnrollmentProfileFunc func(ctx context.Context, enrollmentPayload fleet.MDMAppleEnrollmentProfilePayload) (*fleet.MDMAppleEnrollmentProfile, error)
+
+type GetMDMAppleEnrollmentProfileByTokenFunc func(ctx context.Context, token string) (*fleet.MDMAppleEnrollmentProfile, error)
+
+type ListMDMAppleEnrollmentProfilesFunc func(ctx context.Context) ([]*fleet.MDMAppleEnrollmentProfile, error)
+
+type GetMDMAppleCommandResultsFunc func(ctx context.Context, commandUUID string) (map[string]*fleet.MDMAppleCommandResult, error)
+
+type NewMDMAppleInstallerFunc func(ctx context.Context, name string, size int64, manifest string, installer []byte, urlToken string) (*fleet.MDMAppleInstaller, error)
+
+type MDMAppleInstallerFunc func(ctx context.Context, token string) (*fleet.MDMAppleInstaller, error)
+
+type MDMAppleInstallerDetailsByIDFunc func(ctx context.Context, id uint) (*fleet.MDMAppleInstaller, error)
+
+type DeleteMDMAppleInstallerFunc func(ctx context.Context, id uint) error
+
+type MDMAppleInstallerDetailsByTokenFunc func(ctx context.Context, token string) (*fleet.MDMAppleInstaller, error)
+
+type ListMDMAppleInstallersFunc func(ctx context.Context) ([]fleet.MDMAppleInstaller, error)
+
+type MDMAppleListDevicesFunc func(ctx context.Context) ([]fleet.MDMAppleDevice, error)
 
 type DataStore struct {
 	HealthCheckFunc        HealthCheckFunc
@@ -697,17 +745,26 @@ type DataStore struct {
 	SetOrUpdateDeviceAuthTokenFunc        SetOrUpdateDeviceAuthTokenFunc
 	SetOrUpdateDeviceAuthTokenFuncInvoked bool
 
+	FailingPoliciesCountFunc        FailingPoliciesCountFunc
+	FailingPoliciesCountFuncInvoked bool
+
 	ListPoliciesForHostFunc        ListPoliciesForHostFunc
 	ListPoliciesForHostFuncInvoked bool
 
-	GetMunkiVersionFunc        GetMunkiVersionFunc
-	GetMunkiVersionFuncInvoked bool
+	GetHostMunkiVersionFunc        GetHostMunkiVersionFunc
+	GetHostMunkiVersionFuncInvoked bool
 
-	GetMDMFunc        GetMDMFunc
-	GetMDMFuncInvoked bool
+	GetHostMunkiIssuesFunc        GetHostMunkiIssuesFunc
+	GetHostMunkiIssuesFuncInvoked bool
+
+	GetHostMDMFunc        GetHostMDMFunc
+	GetHostMDMFuncInvoked bool
 
 	AggregatedMunkiVersionFunc        AggregatedMunkiVersionFunc
 	AggregatedMunkiVersionFuncInvoked bool
+
+	AggregatedMunkiIssuesFunc        AggregatedMunkiIssuesFunc
+	AggregatedMunkiIssuesFuncInvoked bool
 
 	AggregatedMDMStatusFunc        AggregatedMDMStatusFunc
 	AggregatedMDMStatusFuncInvoked bool
@@ -717,6 +774,12 @@ type DataStore struct {
 
 	GenerateAggregatedMunkiAndMDMFunc        GenerateAggregatedMunkiAndMDMFunc
 	GenerateAggregatedMunkiAndMDMFuncInvoked bool
+
+	GetMunkiIssueFunc        GetMunkiIssueFunc
+	GetMunkiIssueFuncInvoked bool
+
+	GetMDMSolutionFunc        GetMDMSolutionFunc
+	GetMDMSolutionFuncInvoked bool
 
 	OSVersionsFunc        OSVersionsFunc
 	OSVersionsFuncInvoked bool
@@ -910,6 +973,9 @@ type DataStore struct {
 	RecordStatisticsSentFunc        RecordStatisticsSentFunc
 	RecordStatisticsSentFuncInvoked bool
 
+	CleanupStatisticsFunc        CleanupStatisticsFunc
+	CleanupStatisticsFuncInvoked bool
+
 	ApplyPolicySpecsFunc        ApplyPolicySpecsFunc
 	ApplyPolicySpecsFuncInvoked bool
 
@@ -973,6 +1039,12 @@ type DataStore struct {
 	CleanupPolicyMembershipFunc        CleanupPolicyMembershipFunc
 	CleanupPolicyMembershipFuncInvoked bool
 
+	IncrementPolicyViolationDaysFunc        IncrementPolicyViolationDaysFunc
+	IncrementPolicyViolationDaysFuncInvoked bool
+
+	InitializePolicyViolationDaysFunc        InitializePolicyViolationDaysFunc
+	InitializePolicyViolationDaysFuncInvoked bool
+
 	LockFunc        LockFunc
 	LockFuncInvoked bool
 
@@ -991,6 +1063,9 @@ type DataStore struct {
 	LoadHostByNodeKeyFunc        LoadHostByNodeKeyFunc
 	LoadHostByNodeKeyFuncInvoked bool
 
+	LoadHostByOrbitNodeKeyFunc        LoadHostByOrbitNodeKeyFunc
+	LoadHostByOrbitNodeKeyFuncInvoked bool
+
 	HostLiteFunc        HostLiteFunc
 	HostLiteFuncInvoked bool
 
@@ -999,6 +1074,9 @@ type DataStore struct {
 
 	TeamAgentOptionsFunc        TeamAgentOptionsFunc
 	TeamAgentOptionsFuncInvoked bool
+
+	TeamFeaturesFunc        TeamFeaturesFunc
+	TeamFeaturesFuncInvoked bool
 
 	SaveHostPackStatsFunc        SaveHostPackStatsFunc
 	SaveHostPackStatsFuncInvoked bool
@@ -1033,11 +1111,14 @@ type DataStore struct {
 	SaveHostAdditionalFunc        SaveHostAdditionalFunc
 	SaveHostAdditionalFuncInvoked bool
 
-	SetOrUpdateMunkiVersionFunc        SetOrUpdateMunkiVersionFunc
-	SetOrUpdateMunkiVersionFuncInvoked bool
+	SetOrUpdateMunkiInfoFunc        SetOrUpdateMunkiInfoFunc
+	SetOrUpdateMunkiInfoFuncInvoked bool
 
 	SetOrUpdateMDMDataFunc        SetOrUpdateMDMDataFunc
 	SetOrUpdateMDMDataFuncInvoked bool
+
+	SetOrUpdateHostDisksSpaceFunc        SetOrUpdateHostDisksSpaceFunc
+	SetOrUpdateHostDisksSpaceFuncInvoked bool
 
 	ReplaceHostDeviceMappingFunc        ReplaceHostDeviceMappingFunc
 	ReplaceHostDeviceMappingFuncInvoked bool
@@ -1050,6 +1131,9 @@ type DataStore struct {
 
 	EnrollHostFunc        EnrollHostFunc
 	EnrollHostFuncInvoked bool
+
+	EnrollOrbitFunc        EnrollOrbitFunc
+	EnrollOrbitFuncInvoked bool
 
 	SerialUpdateHostFunc        SerialUpdateHostFunc
 	SerialUpdateHostFuncInvoked bool
@@ -1068,6 +1152,42 @@ type DataStore struct {
 
 	ProcessListFunc        ProcessListFunc
 	ProcessListFuncInvoked bool
+
+	InsertWindowsUpdatesFunc        InsertWindowsUpdatesFunc
+	InsertWindowsUpdatesFuncInvoked bool
+
+	NewMDMAppleEnrollmentProfileFunc        NewMDMAppleEnrollmentProfileFunc
+	NewMDMAppleEnrollmentProfileFuncInvoked bool
+
+	GetMDMAppleEnrollmentProfileByTokenFunc        GetMDMAppleEnrollmentProfileByTokenFunc
+	GetMDMAppleEnrollmentProfileByTokenFuncInvoked bool
+
+	ListMDMAppleEnrollmentProfilesFunc        ListMDMAppleEnrollmentProfilesFunc
+	ListMDMAppleEnrollmentProfilesFuncInvoked bool
+
+	GetMDMAppleCommandResultsFunc        GetMDMAppleCommandResultsFunc
+	GetMDMAppleCommandResultsFuncInvoked bool
+
+	NewMDMAppleInstallerFunc        NewMDMAppleInstallerFunc
+	NewMDMAppleInstallerFuncInvoked bool
+
+	MDMAppleInstallerFunc        MDMAppleInstallerFunc
+	MDMAppleInstallerFuncInvoked bool
+
+	MDMAppleInstallerDetailsByIDFunc        MDMAppleInstallerDetailsByIDFunc
+	MDMAppleInstallerDetailsByIDFuncInvoked bool
+
+	DeleteMDMAppleInstallerFunc        DeleteMDMAppleInstallerFunc
+	DeleteMDMAppleInstallerFuncInvoked bool
+
+	MDMAppleInstallerDetailsByTokenFunc        MDMAppleInstallerDetailsByTokenFunc
+	MDMAppleInstallerDetailsByTokenFuncInvoked bool
+
+	ListMDMAppleInstallersFunc        ListMDMAppleInstallersFunc
+	ListMDMAppleInstallersFuncInvoked bool
+
+	MDMAppleListDevicesFunc        MDMAppleListDevicesFunc
+	MDMAppleListDevicesFuncInvoked bool
 }
 
 func (s *DataStore) HealthCheck() error {
@@ -1440,9 +1560,9 @@ func (s *DataStore) CleanupIncomingHosts(ctx context.Context, now time.Time) ([]
 	return s.CleanupIncomingHostsFunc(ctx, now)
 }
 
-func (s *DataStore) GenerateHostStatusStatistics(ctx context.Context, filter fleet.TeamFilter, now time.Time, platform *string) (*fleet.HostSummary, error) {
+func (s *DataStore) GenerateHostStatusStatistics(ctx context.Context, filter fleet.TeamFilter, now time.Time, platform *string, lowDiskSpace *int) (*fleet.HostSummary, error) {
 	s.GenerateHostStatusStatisticsFuncInvoked = true
-	return s.GenerateHostStatusStatisticsFunc(ctx, filter, now, platform)
+	return s.GenerateHostStatusStatisticsFunc(ctx, filter, now, platform, lowDiskSpace)
 }
 
 func (s *DataStore) HostIDsByName(ctx context.Context, filter fleet.TeamFilter, hostnames []string) ([]uint, error) {
@@ -1495,9 +1615,9 @@ func (s *DataStore) ListHostBatteries(ctx context.Context, id uint) ([]*fleet.Ho
 	return s.ListHostBatteriesFunc(ctx, id)
 }
 
-func (s *DataStore) LoadHostByDeviceAuthToken(ctx context.Context, authToken string) (*fleet.Host, error) {
+func (s *DataStore) LoadHostByDeviceAuthToken(ctx context.Context, authToken string, tokenTTL time.Duration) (*fleet.Host, error) {
 	s.LoadHostByDeviceAuthTokenFuncInvoked = true
-	return s.LoadHostByDeviceAuthTokenFunc(ctx, authToken)
+	return s.LoadHostByDeviceAuthTokenFunc(ctx, authToken, tokenTTL)
 }
 
 func (s *DataStore) SetOrUpdateDeviceAuthToken(ctx context.Context, hostID uint, authToken string) error {
@@ -1505,24 +1625,39 @@ func (s *DataStore) SetOrUpdateDeviceAuthToken(ctx context.Context, hostID uint,
 	return s.SetOrUpdateDeviceAuthTokenFunc(ctx, hostID, authToken)
 }
 
+func (s *DataStore) FailingPoliciesCount(ctx context.Context, host *fleet.Host) (uint, error) {
+	s.FailingPoliciesCountFuncInvoked = true
+	return s.FailingPoliciesCountFunc(ctx, host)
+}
+
 func (s *DataStore) ListPoliciesForHost(ctx context.Context, host *fleet.Host) ([]*fleet.HostPolicy, error) {
 	s.ListPoliciesForHostFuncInvoked = true
 	return s.ListPoliciesForHostFunc(ctx, host)
 }
 
-func (s *DataStore) GetMunkiVersion(ctx context.Context, hostID uint) (string, error) {
-	s.GetMunkiVersionFuncInvoked = true
-	return s.GetMunkiVersionFunc(ctx, hostID)
+func (s *DataStore) GetHostMunkiVersion(ctx context.Context, hostID uint) (string, error) {
+	s.GetHostMunkiVersionFuncInvoked = true
+	return s.GetHostMunkiVersionFunc(ctx, hostID)
 }
 
-func (s *DataStore) GetMDM(ctx context.Context, hostID uint) (*fleet.HostMDM, error) {
-	s.GetMDMFuncInvoked = true
-	return s.GetMDMFunc(ctx, hostID)
+func (s *DataStore) GetHostMunkiIssues(ctx context.Context, hostID uint) ([]*fleet.HostMunkiIssue, error) {
+	s.GetHostMunkiIssuesFuncInvoked = true
+	return s.GetHostMunkiIssuesFunc(ctx, hostID)
+}
+
+func (s *DataStore) GetHostMDM(ctx context.Context, hostID uint) (*fleet.HostMDM, error) {
+	s.GetHostMDMFuncInvoked = true
+	return s.GetHostMDMFunc(ctx, hostID)
 }
 
 func (s *DataStore) AggregatedMunkiVersion(ctx context.Context, teamID *uint) ([]fleet.AggregatedMunkiVersion, time.Time, error) {
 	s.AggregatedMunkiVersionFuncInvoked = true
 	return s.AggregatedMunkiVersionFunc(ctx, teamID)
+}
+
+func (s *DataStore) AggregatedMunkiIssues(ctx context.Context, teamID *uint) ([]fleet.AggregatedMunkiIssue, time.Time, error) {
+	s.AggregatedMunkiIssuesFuncInvoked = true
+	return s.AggregatedMunkiIssuesFunc(ctx, teamID)
 }
 
 func (s *DataStore) AggregatedMDMStatus(ctx context.Context, teamID *uint) (fleet.AggregatedMDMStatus, time.Time, error) {
@@ -1540,9 +1675,19 @@ func (s *DataStore) GenerateAggregatedMunkiAndMDM(ctx context.Context) error {
 	return s.GenerateAggregatedMunkiAndMDMFunc(ctx)
 }
 
-func (s *DataStore) OSVersions(ctx context.Context, teamID *uint, platform *string, osID *uint) (*fleet.OSVersions, error) {
+func (s *DataStore) GetMunkiIssue(ctx context.Context, munkiIssueID uint) (*fleet.MunkiIssue, error) {
+	s.GetMunkiIssueFuncInvoked = true
+	return s.GetMunkiIssueFunc(ctx, munkiIssueID)
+}
+
+func (s *DataStore) GetMDMSolution(ctx context.Context, mdmID uint) (*fleet.MDMSolution, error) {
+	s.GetMDMSolutionFuncInvoked = true
+	return s.GetMDMSolutionFunc(ctx, mdmID)
+}
+
+func (s *DataStore) OSVersions(ctx context.Context, teamID *uint, platform *string, name *string, version *string) (*fleet.OSVersions, error) {
 	s.OSVersionsFuncInvoked = true
-	return s.OSVersionsFunc(ctx, teamID, platform, osID)
+	return s.OSVersionsFunc(ctx, teamID, platform, name, version)
 }
 
 func (s *DataStore) UpdateOSVersions(ctx context.Context) error {
@@ -1780,9 +1925,9 @@ func (s *DataStore) AddCPEForSoftware(ctx context.Context, software fleet.Softwa
 	return s.AddCPEForSoftwareFunc(ctx, software, cpe)
 }
 
-func (s *DataStore) ListSoftwareCPEs(ctx context.Context, excludedPlatforms []string) ([]fleet.SoftwareCPE, error) {
+func (s *DataStore) ListSoftwareCPEs(ctx context.Context) ([]fleet.SoftwareCPE, error) {
 	s.ListSoftwareCPEsFuncInvoked = true
-	return s.ListSoftwareCPEsFunc(ctx, excludedPlatforms)
+	return s.ListSoftwareCPEsFunc(ctx)
 }
 
 func (s *DataStore) InsertVulnerabilities(ctx context.Context, vulns []fleet.SoftwareVulnerability, source fleet.VulnerabilitySource) (int64, error) {
@@ -1858,6 +2003,11 @@ func (s *DataStore) ShouldSendStatistics(ctx context.Context, frequency time.Dur
 func (s *DataStore) RecordStatisticsSent(ctx context.Context) error {
 	s.RecordStatisticsSentFuncInvoked = true
 	return s.RecordStatisticsSentFunc(ctx)
+}
+
+func (s *DataStore) CleanupStatistics(ctx context.Context) error {
+	s.CleanupStatisticsFuncInvoked = true
+	return s.CleanupStatisticsFunc(ctx)
 }
 
 func (s *DataStore) ApplyPolicySpecs(ctx context.Context, authorID uint, specs []*fleet.PolicySpec) error {
@@ -1945,7 +2095,7 @@ func (s *DataStore) NewTeamPolicy(ctx context.Context, teamID uint, authorID *ui
 	return s.NewTeamPolicyFunc(ctx, teamID, authorID, args)
 }
 
-func (s *DataStore) ListTeamPolicies(ctx context.Context, teamID uint) ([]*fleet.Policy, error) {
+func (s *DataStore) ListTeamPolicies(ctx context.Context, teamID uint) (teamPolicies []*fleet.Policy, inheritedPolicies []*fleet.Policy, err error) {
 	s.ListTeamPoliciesFuncInvoked = true
 	return s.ListTeamPoliciesFunc(ctx, teamID)
 }
@@ -1963,6 +2113,16 @@ func (s *DataStore) TeamPolicy(ctx context.Context, teamID uint, policyID uint) 
 func (s *DataStore) CleanupPolicyMembership(ctx context.Context, now time.Time) error {
 	s.CleanupPolicyMembershipFuncInvoked = true
 	return s.CleanupPolicyMembershipFunc(ctx, now)
+}
+
+func (s *DataStore) IncrementPolicyViolationDays(ctx context.Context) error {
+	s.IncrementPolicyViolationDaysFuncInvoked = true
+	return s.IncrementPolicyViolationDaysFunc(ctx)
+}
+
+func (s *DataStore) InitializePolicyViolationDays(ctx context.Context) error {
+	s.InitializePolicyViolationDaysFuncInvoked = true
+	return s.InitializePolicyViolationDaysFunc(ctx)
 }
 
 func (s *DataStore) Lock(ctx context.Context, name string, owner string, expiration time.Duration) (bool, error) {
@@ -1995,6 +2155,11 @@ func (s *DataStore) LoadHostByNodeKey(ctx context.Context, nodeKey string) (*fle
 	return s.LoadHostByNodeKeyFunc(ctx, nodeKey)
 }
 
+func (s *DataStore) LoadHostByOrbitNodeKey(ctx context.Context, nodeKey string) (*fleet.Host, error) {
+	s.LoadHostByOrbitNodeKeyFuncInvoked = true
+	return s.LoadHostByOrbitNodeKeyFunc(ctx, nodeKey)
+}
+
 func (s *DataStore) HostLite(ctx context.Context, hostID uint) (*fleet.Host, error) {
 	s.HostLiteFuncInvoked = true
 	return s.HostLiteFunc(ctx, hostID)
@@ -2008,6 +2173,11 @@ func (s *DataStore) UpdateHostOsqueryIntervals(ctx context.Context, hostID uint,
 func (s *DataStore) TeamAgentOptions(ctx context.Context, teamID uint) (*json.RawMessage, error) {
 	s.TeamAgentOptionsFuncInvoked = true
 	return s.TeamAgentOptionsFunc(ctx, teamID)
+}
+
+func (s *DataStore) TeamFeatures(ctx context.Context, teamID uint) (*fleet.Features, error) {
+	s.TeamFeaturesFuncInvoked = true
+	return s.TeamFeaturesFunc(ctx, teamID)
 }
 
 func (s *DataStore) SaveHostPackStats(ctx context.Context, hostID uint, stats []fleet.PackStats) error {
@@ -2065,14 +2235,19 @@ func (s *DataStore) SaveHostAdditional(ctx context.Context, hostID uint, additio
 	return s.SaveHostAdditionalFunc(ctx, hostID, additional)
 }
 
-func (s *DataStore) SetOrUpdateMunkiVersion(ctx context.Context, hostID uint, version string) error {
-	s.SetOrUpdateMunkiVersionFuncInvoked = true
-	return s.SetOrUpdateMunkiVersionFunc(ctx, hostID, version)
+func (s *DataStore) SetOrUpdateMunkiInfo(ctx context.Context, hostID uint, version string, errors []string, warnings []string) error {
+	s.SetOrUpdateMunkiInfoFuncInvoked = true
+	return s.SetOrUpdateMunkiInfoFunc(ctx, hostID, version, errors, warnings)
 }
 
 func (s *DataStore) SetOrUpdateMDMData(ctx context.Context, hostID uint, enrolled bool, serverURL string, installedFromDep bool) error {
 	s.SetOrUpdateMDMDataFuncInvoked = true
 	return s.SetOrUpdateMDMDataFunc(ctx, hostID, enrolled, serverURL, installedFromDep)
+}
+
+func (s *DataStore) SetOrUpdateHostDisksSpace(ctx context.Context, hostID uint, gigsAvailable float64, percentAvailable float64) error {
+	s.SetOrUpdateHostDisksSpaceFuncInvoked = true
+	return s.SetOrUpdateHostDisksSpaceFunc(ctx, hostID, gigsAvailable, percentAvailable)
 }
 
 func (s *DataStore) ReplaceHostDeviceMapping(ctx context.Context, id uint, mappings []*fleet.HostDeviceMapping) error {
@@ -2093,6 +2268,11 @@ func (s *DataStore) VerifyEnrollSecret(ctx context.Context, secret string) (*fle
 func (s *DataStore) EnrollHost(ctx context.Context, osqueryHostId string, nodeKey string, teamID *uint, cooldown time.Duration) (*fleet.Host, error) {
 	s.EnrollHostFuncInvoked = true
 	return s.EnrollHostFunc(ctx, osqueryHostId, nodeKey, teamID, cooldown)
+}
+
+func (s *DataStore) EnrollOrbit(ctx context.Context, hardwareUUID string, orbitNodeKey string, teamID *uint) (*fleet.Host, error) {
+	s.EnrollOrbitFuncInvoked = true
+	return s.EnrollOrbitFunc(ctx, hardwareUUID, orbitNodeKey, teamID)
 }
 
 func (s *DataStore) SerialUpdateHost(ctx context.Context, host *fleet.Host) error {
@@ -2123,4 +2303,64 @@ func (s *DataStore) InnoDBStatus(ctx context.Context) (string, error) {
 func (s *DataStore) ProcessList(ctx context.Context) ([]fleet.MySQLProcess, error) {
 	s.ProcessListFuncInvoked = true
 	return s.ProcessListFunc(ctx)
+}
+
+func (s *DataStore) InsertWindowsUpdates(ctx context.Context, hostID uint, updates []fleet.WindowsUpdate) error {
+	s.InsertWindowsUpdatesFuncInvoked = true
+	return s.InsertWindowsUpdatesFunc(ctx, hostID, updates)
+}
+
+func (s *DataStore) NewMDMAppleEnrollmentProfile(ctx context.Context, enrollmentPayload fleet.MDMAppleEnrollmentProfilePayload) (*fleet.MDMAppleEnrollmentProfile, error) {
+	s.NewMDMAppleEnrollmentProfileFuncInvoked = true
+	return s.NewMDMAppleEnrollmentProfileFunc(ctx, enrollmentPayload)
+}
+
+func (s *DataStore) GetMDMAppleEnrollmentProfileByToken(ctx context.Context, token string) (*fleet.MDMAppleEnrollmentProfile, error) {
+	s.GetMDMAppleEnrollmentProfileByTokenFuncInvoked = true
+	return s.GetMDMAppleEnrollmentProfileByTokenFunc(ctx, token)
+}
+
+func (s *DataStore) ListMDMAppleEnrollmentProfiles(ctx context.Context) ([]*fleet.MDMAppleEnrollmentProfile, error) {
+	s.ListMDMAppleEnrollmentProfilesFuncInvoked = true
+	return s.ListMDMAppleEnrollmentProfilesFunc(ctx)
+}
+
+func (s *DataStore) GetMDMAppleCommandResults(ctx context.Context, commandUUID string) (map[string]*fleet.MDMAppleCommandResult, error) {
+	s.GetMDMAppleCommandResultsFuncInvoked = true
+	return s.GetMDMAppleCommandResultsFunc(ctx, commandUUID)
+}
+
+func (s *DataStore) NewMDMAppleInstaller(ctx context.Context, name string, size int64, manifest string, installer []byte, urlToken string) (*fleet.MDMAppleInstaller, error) {
+	s.NewMDMAppleInstallerFuncInvoked = true
+	return s.NewMDMAppleInstallerFunc(ctx, name, size, manifest, installer, urlToken)
+}
+
+func (s *DataStore) MDMAppleInstaller(ctx context.Context, token string) (*fleet.MDMAppleInstaller, error) {
+	s.MDMAppleInstallerFuncInvoked = true
+	return s.MDMAppleInstallerFunc(ctx, token)
+}
+
+func (s *DataStore) MDMAppleInstallerDetailsByID(ctx context.Context, id uint) (*fleet.MDMAppleInstaller, error) {
+	s.MDMAppleInstallerDetailsByIDFuncInvoked = true
+	return s.MDMAppleInstallerDetailsByIDFunc(ctx, id)
+}
+
+func (s *DataStore) DeleteMDMAppleInstaller(ctx context.Context, id uint) error {
+	s.DeleteMDMAppleInstallerFuncInvoked = true
+	return s.DeleteMDMAppleInstallerFunc(ctx, id)
+}
+
+func (s *DataStore) MDMAppleInstallerDetailsByToken(ctx context.Context, token string) (*fleet.MDMAppleInstaller, error) {
+	s.MDMAppleInstallerDetailsByTokenFuncInvoked = true
+	return s.MDMAppleInstallerDetailsByTokenFunc(ctx, token)
+}
+
+func (s *DataStore) ListMDMAppleInstallers(ctx context.Context) ([]fleet.MDMAppleInstaller, error) {
+	s.ListMDMAppleInstallersFuncInvoked = true
+	return s.ListMDMAppleInstallersFunc(ctx)
+}
+
+func (s *DataStore) MDMAppleListDevices(ctx context.Context) ([]fleet.MDMAppleDevice, error) {
+	s.MDMAppleListDevicesFuncInvoked = true
+	return s.MDMAppleListDevicesFunc(ctx)
 }

@@ -1,4 +1,5 @@
 import CONSTANTS from "../../../support/constants";
+import managePoliciesPage from "../../pages/managePoliciesPage";
 
 const {
   CONFIG_INTEGRATIONS_AUTOMATIONS,
@@ -139,19 +140,19 @@ describe("Policies flow (empty)", () => {
   describe("Manage policies page", () => {
     beforeEach(() => {
       cy.loginWithCySession();
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
     });
     it("creates a custom policy", () => {
       cy.getAttached(".policies-table__action-button-container").within(() => {
         cy.findByText(/add a policy/i).click();
       });
       cy.findByText(/create your own policy/i).click();
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .click({ force: true })
         .type(
           "{selectall}SELECT 1 FROM users WHERE username = 'backup' LIMIT 1;"
         );
-      cy.getAttached(".policy-form__save").click();
+      cy.findByRole("button", { name: /save/i }).click();
       cy.getAttached(".policy-form__policy-save-modal-name")
         .click()
         .type("Does the device have a user named 'backup'?");
@@ -161,27 +162,20 @@ describe("Policies flow (empty)", () => {
       cy.getAttached(".policy-form__policy-save-modal-resolution")
         .click()
         .type("Create a user named 'backup'");
-      cy.getAttached(".policy-form__button--modal-save").click();
+      cy.findByRole("button", { name: /save policy/i }).click();
       cy.findByText(/policy created/i).should("exist");
     });
 
     it("creates a default policy", () => {
-      cy.getAttached(".manage-policies-page__header-wrap").within(() => {
-        cy.findByText(/add a policy/i).click();
-      });
-      cy.findByText(/gatekeeper enabled/i).click();
-      cy.getAttached(".policy-form__save").click();
-      cy.getAttached(".policy-form__button-wrap--modal").within(() => {
-        cy.getAttached(".policy-form__button--modal-save").click();
-      });
-      cy.findByText(/policy created/i).should("exist");
+      managePoliciesPage.allowsAddDefaultPolicy();
+      managePoliciesPage.verifiesAddedDefaultPolicy();
     });
   });
 
   describe("Platform compatibility", () => {
     beforeEach(() => {
       cy.loginWithCySession();
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
     });
     const platforms = ["macOS", "Windows", "Linux"];
 
@@ -211,11 +205,10 @@ describe("Policies flow (empty)", () => {
     };
 
     it("checks sql statement for platform compatibility", () => {
-      cy.visit("/policies/manage");
       cy.getAttached(".manage-policies-page__header-wrap").within(() => {
         cy.findByText(/add a policy/i).click();
       });
-      cy.getAttached(".add-policy-modal__modal").within(() => {
+      cy.getAttached(".add-policy-modal").within(() => {
         cy.findByRole("button", { name: /create your own policy/i }).click();
       });
 
@@ -224,7 +217,7 @@ describe("Policies flow (empty)", () => {
       });
 
       // Query with unknown table name displays error message
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
         .type("{selectall}SELECT 1 FROM foo WHERE start_time > 1;");
@@ -237,7 +230,7 @@ describe("Policies flow (empty)", () => {
       });
 
       // Query with syntax error displays error message
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
         .type("{selectall}SELEC 1 FRO osquery_info WHER start_time > 1;");
@@ -250,7 +243,7 @@ describe("Policies flow (empty)", () => {
       });
 
       // Query with no tables treated as compatible with all platforms
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
         .type("{selectall}SELECT * WHERE 1 = 1;");
@@ -261,7 +254,7 @@ describe("Policies flow (empty)", () => {
       });
 
       // Tables defined in common table expression not factored into compatibility check
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
         .type("{selectall} ")
@@ -270,15 +263,18 @@ describe("Policies flow (empty)", () => {
           { parseSpecialCharSequences: false }
         );
       // eslint-disable-next-line cypress/no-unnecessary-waiting
-      cy.wait(700); // wait for text input debounce
+      cy.wait(1000); // wait for text input debounce
       cy.getAttached(".platform").each((el, i) => {
         testCompatibility(el, i, [true, false, true]);
       });
 
       // Query with only macOS tables treated as compatible only with macOS
-      cy.getAttached(".ace_scroller")
+      // eslint-disable-next-line cypress/no-unnecessary-waiting
+      cy.getAttached(" .policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
+        .type("{selectall} ")
+        .wait(300) // wait for ace to clear text before proceeding
         .type(
           "{selectall}SELECT 1 FROM gatekeeper WHERE assessments_enabled = 1;"
         );
@@ -289,7 +285,7 @@ describe("Policies flow (empty)", () => {
       });
 
       // Query with macadmins extension table is not treated as incompatible
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .first()
         .click({ force: true })
         .type("{selectall}SELECT 1 FROM mdm WHERE enrolled='true';");
@@ -304,7 +300,7 @@ describe("Policies flow (empty)", () => {
       cy.getAttached(".manage-policies-page__header-wrap").within(() => {
         cy.findByText(/add a policy/i).click();
       });
-      cy.getAttached(".add-policy-modal__modal").within(() => {
+      cy.getAttached(".add-policy-modal").within(() => {
         cy.findByText("Automatic login disabled (macOS)").click();
       });
 
@@ -313,7 +309,7 @@ describe("Policies flow (empty)", () => {
           testCompatibility(el, i, [true, false, false]);
         });
       });
-      cy.getAttached(".policy-form__save").click();
+      cy.findByRole("button", { name: /save/i }).click();
 
       cy.getAttached(".platform-selector").within(() => {
         cy.getAttached(".fleet-checkbox__input").each((el, i) => {
@@ -326,10 +322,10 @@ describe("Policies flow (empty)", () => {
       cy.getAttached(".manage-policies-page__header-wrap").within(() => {
         cy.findByText(/add a policy/i).click();
       });
-      cy.getAttached(".add-policy-modal__modal").within(() => {
+      cy.getAttached(".add-policy-modal").within(() => {
         cy.findByText("Automatic login disabled (macOS)").click();
       });
-      cy.getAttached(".policy-form__save").click();
+      cy.findByRole("button", { name: /save/i }).click();
 
       cy.getAttached(".platform-selector").within(() => {
         cy.getAttached(".fleet-checkbox__input").each((el, i) => {
@@ -340,14 +336,16 @@ describe("Policies flow (empty)", () => {
           testSelections(el, i, [false, false, false]);
         });
       });
-      cy.getAttached(".policy-form__button--modal-save").should("be.disabled");
+      cy.getAttached(".modal-cta-wrap").within(() => {
+        cy.findByRole("button", { name: /save policy/i }).should("be.disabled");
+      });
     });
 
     it("allows user to overide preselected platforms when saving new policy", () => {
       cy.getAttached(".manage-policies-page__header-wrap").within(() => {
         cy.findByText(/add a policy/i).click();
       });
-      cy.getAttached(".add-policy-modal__modal").within(() => {
+      cy.getAttached(".add-policy-modal").within(() => {
         cy.findByText("Automatic login disabled (macOS)").click();
       });
 
@@ -356,7 +354,7 @@ describe("Policies flow (empty)", () => {
           testCompatibility(el, i, [true, false, false]);
         });
       });
-      cy.getAttached(".policy-form__save").click();
+      cy.findByRole("button", { name: /save/i }).click();
 
       cy.getAttached(".platform-selector").within(() => {
         cy.getAttached(".fleet-checkbox__input").each((el, i) => {
@@ -368,11 +366,11 @@ describe("Policies flow (empty)", () => {
           testSelections(el, i, [false, false, true]);
         });
       });
-      cy.getAttached(".policy-form__button--modal-save").click();
+      cy.findByRole("button", { name: /save policy/i }).click();
       cy.findByText(/policy created/i).should("exist");
 
       // confirm that new policy was saved with user-selected platforms
-      cy.visit("policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.getAttached("tbody").within(() => {
         cy.getAttached(".name__cell .button--text-link")
           .contains("Automatic login disabled (macOS)")
@@ -390,15 +388,15 @@ describe("Policies flow (empty)", () => {
       cy.getAttached(".manage-policies-page__header-wrap").within(() => {
         cy.findByText(/add a policy/i).click();
       });
-      cy.getAttached(".add-policy-modal__modal").within(() => {
+      cy.getAttached(".add-policy-modal").within(() => {
         cy.findByText("Antivirus healthy (macOS)").click();
       });
-      cy.getAttached(".policy-form__save").click();
-      cy.getAttached(".policy-form__button--modal-save").click();
+      cy.findByRole("button", { name: /save/i }).click();
+      cy.findByRole("button", { name: /save policy/i }).click();
       cy.findByText(/policy created/i).should("exist");
 
       // edit platform selections for policy
-      cy.visit("policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.getAttached("tbody").within(() => {
         cy.getAttached(".name__cell .button--text-link")
           .contains("Antivirus healthy (macOS)")
@@ -426,7 +424,7 @@ describe("Policies flow (empty)", () => {
       cy.findByText(/policy updated/i).should("exist");
 
       // confirm that policy was saved with new selection
-      cy.visit("policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.getAttached("tbody").within(() => {
         cy.getAttached(".name__cell .button--text-link")
           .contains("Antivirus healthy (macOS)")
@@ -456,7 +454,7 @@ describe("Policies flow (seeded)", () => {
   describe("Manage policies page", () => {
     beforeEach(() => {
       cy.loginWithCySession();
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
     });
     it("links to manage host page filtered by policy", () => {
       // Move internal clock forward 2 hours so that policies report host results
@@ -467,11 +465,11 @@ describe("Policies flow (seeded)", () => {
           cy.getAttached(".button--text-link").click();
         });
       // confirm policy functionality on manage host page
-      cy.getAttached(".manage-hosts__policies-filter-block").within(() => {
+      cy.getAttached(".manage-hosts__labels-active-filter-wrap").within(() => {
         cy.findByText(/filevault enabled/i).should("exist");
         cy.findByText(/no/i).should("exist").click();
         cy.findByText(/yes/i).should("exist");
-        cy.get('img[alt="Remove policy filter"]').click();
+        cy.get('img[alt="Remove filter"]').click();
         cy.findByText(/filevault enabled'/i).should("not.exist");
       });
     });
@@ -479,33 +477,21 @@ describe("Policies flow (seeded)", () => {
       cy.getAttached("tbody").within(() => {
         cy.getAttached(".name__cell .button--text-link").first().click();
       });
-      cy.getAttached(".ace_scroller")
+      cy.getAttached(".policy-page__form .ace_scroller")
         .click({ force: true })
         .type(
           "{selectall}SELECT 1 FROM gatekeeper WHERE assessments_enabled = 1;"
         );
       cy.getAttached(".fleet-checkbox__label").first().click();
-      cy.getAttached(".policy-form__save").click();
+      cy.findByRole("button", { name: /save/i }).click();
       cy.findByText(/policy updated/i).should("exist");
       cy.visit("policies/1");
       cy.getAttached(".fleet-checkbox__input").first().should("not.be.checked");
     });
 
     it("deletes an existing policy", () => {
-      cy.getAttached("tbody").within(() => {
-        cy.getAttached("tr")
-          .first()
-          .within(() => {
-            cy.getAttached(".fleet-checkbox__input").check({ force: true });
-          });
-      });
-      cy.findByRole("button", { name: /delete/i }).click();
-      cy.getAttached(".delete-policies-modal").within(() => {
-        cy.findByRole("button", { name: /cancel/i }).should("exist");
-        cy.findByRole("button", { name: /delete/i }).click();
-      });
-      cy.findByText(/deleted policy/i).should("exist");
-      cy.findByText(/backup/i).should("not.exist");
+      managePoliciesPage.allowsDeletePolicy();
+      managePoliciesPage.verifiesDeletedPolicy();
     });
     it("creates a failing policies webhook", () => {
       cy.getAttached(".button-wrap").within(() => {
@@ -530,6 +516,8 @@ describe("Policies flow (seeded)", () => {
         cy.getAttached(".fleet-slider").click();
       });
       cy.findByRole("button", { name: /^Save$/ }).click();
+      // Confirm failing policies webhook was updated successfully
+      cy.findByText(/updated policy automations/i).should("exist");
     });
     it("empty automation state prompts to create an integration", () => {
       cy.getAttached(".button-wrap").within(() => {
@@ -558,7 +546,7 @@ describe("Policies flow (seeded)", () => {
         "/api/latest/fleet/config",
         CONFIG_INTEGRATIONS_AUTOMATIONS
       ).as("getIntegrations");
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.wait("@getIntegrations").then((configStub) => {
         console.log(JSON.stringify(configStub));
       });
@@ -597,7 +585,7 @@ describe("Policies flow (seeded)", () => {
         "/api/latest/fleet/config",
         enableJiraPoliciesIntegration
       ).as("getIntegrations");
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.wait("@getIntegrations").then((configStub) => {
         console.log(JSON.stringify(configStub));
       });
@@ -645,7 +633,7 @@ describe("Policies flow (seeded)", () => {
         "/api/latest/fleet/config",
         enableZendeskPoliciesIntegration
       ).as("getIntegrations");
-      cy.visit("/policies/manage");
+      managePoliciesPage.visitManagePoliciesPage();
       cy.wait("@getIntegrations").then((configStub) => {
         console.log(JSON.stringify(configStub));
       });

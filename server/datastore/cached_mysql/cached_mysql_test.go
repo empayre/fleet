@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 )
 
 func TestClone(t *testing.T) {
+	var nilRawMessage *json.RawMessage
+
 	tests := []struct {
 		name string
 		src  interface{}
@@ -61,6 +64,29 @@ func TestClone(t *testing.T) {
 			src:  &[]string{"foo", "bar"},
 			want: &[]string{"foo", "bar"},
 		},
+		{
+			name: "nil",
+			src:  nil,
+			want: nil,
+		},
+		{
+			name: "nil pointer",
+			src:  nilRawMessage,
+			want: nil,
+		},
+		{
+			name: "pointer to struct with nested slice",
+			src: &fleet.AppConfig{
+				ServerSettings: fleet.ServerSettings{
+					DebugHostIDs: []uint{1, 2, 3},
+				},
+			},
+			want: &fleet.AppConfig{
+				ServerSettings: fleet.ServerSettings{
+					DebugHostIDs: []uint{1, 2, 3},
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -68,6 +94,36 @@ func TestClone(t *testing.T) {
 			clone, err := clone(tc.src)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, clone)
+
+			v1, v2 := reflect.ValueOf(tc.src), reflect.ValueOf(clone)
+			if k := v1.Kind(); k == reflect.Pointer || k == reflect.Slice || k == reflect.Map || k == reflect.Chan || k == reflect.Func || k == reflect.UnsafePointer {
+				if clone == nil {
+					assert.True(t, v1.IsNil())
+					return
+				}
+				require.Equal(t, v1.Kind(), v2.Kind())
+				assert.NotEqual(t, v1.Pointer(), v2.Pointer())
+			}
+
+			// ensure that writing to src does not alter the cloned value (i.e. that
+			// the nested fields are deeply cloned too).
+			switch src := tc.src.(type) {
+			case []string:
+				if len(src) > 0 {
+					src[0] = "modified"
+					assert.NotEqual(t, src, clone)
+				}
+			case *[]string:
+				if len(*src) > 0 {
+					(*src)[0] = "modified"
+					assert.NotEqual(t, src, clone)
+				}
+			case *fleet.AppConfig:
+				if len(src.ServerSettings.DebugHostIDs) > 0 {
+					src.ServerSettings.DebugHostIDs[0] = 999
+					assert.NotEqual(t, src.ServerSettings.DebugHostIDs, clone.(*fleet.AppConfig).ServerSettings.DebugHostIDs)
+				}
+			}
 		})
 	}
 }
@@ -91,7 +147,7 @@ func TestCachedAppConfig(t *testing.T) {
 		return nil
 	}
 	_, err := ds.NewAppConfig(context.Background(), &fleet.AppConfig{
-		HostSettings: fleet.HostSettings{
+		Features: fleet.Features{
 			AdditionalQueries: ptr.RawMessage(json.RawMessage(`"TestCachedAppConfig"`)),
 		},
 	})
@@ -102,7 +158,7 @@ func TestCachedAppConfig(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NotEmpty(t, data)
-		assert.Equal(t, json.RawMessage(`"TestCachedAppConfig"`), *data.HostSettings.AdditionalQueries)
+		assert.Equal(t, json.RawMessage(`"TestCachedAppConfig"`), *data.Features.AdditionalQueries)
 	})
 
 	t.Run("AppConfig", func(t *testing.T) {
@@ -111,12 +167,12 @@ func TestCachedAppConfig(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, mockedDS.AppConfigFuncInvoked)
 
-		require.Equal(t, ptr.RawMessage(json.RawMessage(`"TestCachedAppConfig"`)), ac.HostSettings.AdditionalQueries)
+		require.Equal(t, ptr.RawMessage(json.RawMessage(`"TestCachedAppConfig"`)), ac.Features.AdditionalQueries)
 	})
 
 	t.Run("SaveAppConfig", func(t *testing.T) {
 		require.NoError(t, ds.SaveAppConfig(context.Background(), &fleet.AppConfig{
-			HostSettings: fleet.HostSettings{
+			Features: fleet.Features{
 				AdditionalQueries: ptr.RawMessage(json.RawMessage(`"NewSAVED"`)),
 			},
 		}))
@@ -125,14 +181,14 @@ func TestCachedAppConfig(t *testing.T) {
 
 		ac, err := ds.AppConfig(context.Background())
 		require.NoError(t, err)
-		require.NotNil(t, ac.HostSettings.AdditionalQueries)
-		assert.Equal(t, json.RawMessage(`"NewSAVED"`), *ac.HostSettings.AdditionalQueries)
+		require.NotNil(t, ac.Features.AdditionalQueries)
+		assert.Equal(t, json.RawMessage(`"NewSAVED"`), *ac.Features.AdditionalQueries)
 	})
 
 	t.Run("External SaveAppConfig gets caught", func(t *testing.T) {
 		mockedDS.AppConfigFunc = func(ctx context.Context) (*fleet.AppConfig, error) {
 			return &fleet.AppConfig{
-				HostSettings: fleet.HostSettings{
+				Features: fleet.Features{
 					AdditionalQueries: ptr.RawMessage(json.RawMessage(`"SavedSomewhereElse"`)),
 				},
 			}, nil
@@ -142,8 +198,8 @@ func TestCachedAppConfig(t *testing.T) {
 
 		ac, err := ds.AppConfig(context.Background())
 		require.NoError(t, err)
-		require.NotNil(t, ac.HostSettings.AdditionalQueries)
-		assert.Equal(t, json.RawMessage(`"SavedSomewhereElse"`), *ac.HostSettings.AdditionalQueries)
+		require.NotNil(t, ac.Features.AdditionalQueries)
+		assert.Equal(t, json.RawMessage(`"SavedSomewhereElse"`), *ac.Features.AdditionalQueries)
 	})
 }
 
@@ -328,5 +384,80 @@ func TestCachedTeamAgentOptions(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = ds.TeamAgentOptions(context.Background(), testTeam.ID)
+	require.Error(t, err)
+}
+
+func TestCachedTeamFeatures(t *testing.T) {
+	t.Parallel()
+
+	mockedDS := new(mock.Store)
+	ds := New(mockedDS, WithTeamFeaturesExpiration(100*time.Millisecond))
+	ao := json.RawMessage(`{}`)
+
+	aq := json.RawMessage(`{"foo": "bar"}`)
+	testFeatures := fleet.Features{
+		EnableHostUsers:         false,
+		EnableSoftwareInventory: true,
+		AdditionalQueries:       &aq,
+	}
+
+	testTeam := fleet.Team{
+		ID:        1,
+		CreatedAt: time.Now(),
+		Name:      "test",
+		Config: fleet.TeamConfig{
+			Features:     testFeatures,
+			AgentOptions: &ao,
+		},
+	}
+
+	deleted := false
+	mockedDS.TeamFeaturesFunc = func(ctx context.Context, teamID uint) (*fleet.Features, error) {
+		if deleted {
+			return nil, errors.New("not found")
+		}
+		return &testFeatures, nil
+	}
+	mockedDS.SaveTeamFunc = func(ctx context.Context, team *fleet.Team) (*fleet.Team, error) {
+		return team, nil
+	}
+	mockedDS.DeleteTeamFunc = func(ctx context.Context, teamID uint) error {
+		deleted = true
+		return nil
+	}
+
+	features, err := ds.TeamFeatures(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, testFeatures, *features)
+
+	// saving a team updates features in cache
+	aq = json.RawMessage(`{"bar": "baz"}`)
+	updateFeatures := fleet.Features{
+		EnableHostUsers:         true,
+		EnableSoftwareInventory: false,
+		AdditionalQueries:       &aq,
+	}
+	updateTeam := &fleet.Team{
+		ID:        testTeam.ID,
+		CreatedAt: testTeam.CreatedAt,
+		Name:      testTeam.Name,
+		Config: fleet.TeamConfig{
+			Features:     updateFeatures,
+			AgentOptions: &ao,
+		},
+	}
+
+	_, err = ds.SaveTeam(context.Background(), updateTeam)
+	require.NoError(t, err)
+
+	features, err = ds.TeamFeatures(context.Background(), testTeam.ID)
+	require.NoError(t, err)
+	require.Equal(t, updateFeatures, *features)
+
+	// deleting a team removes the features from the cache
+	err = ds.DeleteTeam(context.Background(), testTeam.ID)
+	require.NoError(t, err)
+
+	_, err = ds.TeamFeatures(context.Background(), testTeam.ID)
 	require.Error(t, err)
 }

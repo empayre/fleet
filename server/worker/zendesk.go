@@ -37,7 +37,7 @@ Affected hosts:
 
 {{ $end := len .Hosts }}{{ if gt $end 50 }}{{ $end = 50 }}{{ end }}
 {{ range slice .Hosts 0 $end }}
-* [{{ .Hostname }}]({{ $.FleetURL }}/hosts/{{ .ID }})
+* [{{ .DisplayName }}]({{ $.FleetURL }}/hosts/{{ .ID }})
 {{ end }}
 
 View the affected software and more affected hosts:
@@ -59,7 +59,7 @@ This ticket was created automatically by your Fleet Zendesk integration.
 		`Hosts:
 {{ $end := len .Hosts }}{{ if gt $end 50 }}{{ $end = 50 }}{{ end }}
 {{ range slice .Hosts 0 $end }}
-* [{{ .Hostname }}]({{ $.FleetURL }}/hosts/{{ .ID }})
+* [{{ .DisplayName }}]({{ $.FleetURL }}/hosts/{{ .ID }})
 {{ end }}
 
 View hosts that failed {{ .PolicyName }} on the [**Hosts**]({{ .FleetURL }}/hosts/manage/?order_key=hostname&order_direction=asc&{{ if .TeamID }}team_id={{ .TeamID }}&{{ end }}policy_id={{ .PolicyID }}&policy_response=failing) page in Fleet.
@@ -330,8 +330,13 @@ func QueueZendeskVulnJobs(ctx context.Context, ds fleet.Datastore, logger kitlog
 	sort.Strings(cves)
 	level.Debug(logger).Log("recent_cves", fmt.Sprintf("%v", cves))
 
-	for _, vuln := range recentVulns {
-		job, err := QueueJob(ctx, ds, zendeskName, zendeskArgs{CVE: vuln.CVE})
+	uniqCVEs := make(map[string]bool)
+	for _, v := range recentVulns {
+		uniqCVEs[v.CVE] = true
+	}
+
+	for cve := range uniqCVEs {
+		job, err := QueueJob(ctx, ds, zendeskName, zendeskArgs{CVE: cve})
 		if err != nil {
 			return ctxerr.Wrap(ctx, err, "queueing job")
 		}
@@ -343,7 +348,8 @@ func QueueZendeskVulnJobs(ctx context.Context, ds fleet.Datastore, logger kitlog
 // QueueZendeskFailingPolicyJob queues a Zendesk job for a failing policy to
 // process asynchronously via the worker.
 func QueueZendeskFailingPolicyJob(ctx context.Context, ds fleet.Datastore, logger kitlog.Logger,
-	policy *fleet.Policy, hosts []fleet.PolicySetHost) error {
+	policy *fleet.Policy, hosts []fleet.PolicySetHost,
+) error {
 	attrs := []interface{}{
 		"enabled", "true",
 		"failing_policy", policy.ID,

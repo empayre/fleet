@@ -1,4 +1,5 @@
 name: golangci-lint
+
 on:
   push:
     branches:
@@ -9,7 +10,13 @@ on:
   pull_request:
     paths:
       - '**.go'
+      - '.github/workflows/golangci-lint.yml'
   workflow_dispatch: # Manual
+
+defaults:
+  run:
+    # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
+    shell: bash
 
 permissions:
   contents: read
@@ -22,11 +29,11 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@629c2de402a417ea7690ca6ce3f33229e27606a5 # v2
+      - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
 
-      - uses: actions/setup-go@84cbf8094393cdc5fe1fe1671ff2647332956b1a
+      - uses: actions/setup-go@268d8c0ca0432bb2cf416faae41297df9d262d7f
         with:
-          go-version: '1.17'
+          go-version: '1.19.1'
 
       - name: Run go lint
         run: |

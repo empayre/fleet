@@ -19,33 +19,13 @@ import (
 	"github.com/gocarina/gocsv"
 )
 
-// HostResponse is the response struct that contains the full host information
-// along with the host online status and the "display text" to be used when
-// rendering in the UI.
-type HostResponse struct {
-	*fleet.Host
-	Status           fleet.HostStatus   `json:"status" csv:"status"`
-	DisplayText      string             `json:"display_text" csv:"display_text"`
-	Labels           []fleet.Label      `json:"labels,omitempty" csv:"-"`
-	Geolocation      *fleet.GeoLocation `json:"geolocation,omitempty" csv:"-"`
-	CSVDeviceMapping string             `json:"-" db:"-" csv:"device_mapping"`
-}
-
-func hostResponseForHost(ctx context.Context, svc fleet.Service, host *fleet.Host) (*HostResponse, error) {
-	return &HostResponse{
-		Host:        host,
-		Status:      host.Status(time.Now()),
-		DisplayText: host.Hostname,
-		Geolocation: svc.LookupGeoIP(ctx, host.PublicIP),
-	}, nil
-}
-
 // HostDetailResponse is the response struct that contains the full host information
 // with the HostDetail details.
 type HostDetailResponse struct {
 	fleet.HostDetail
 	Status      fleet.HostStatus   `json:"status"`
 	DisplayText string             `json:"display_text"`
+	DisplayName string             `json:"display_name"`
 	Geolocation *fleet.GeoLocation `json:"geolocation,omitempty"`
 }
 
@@ -54,6 +34,7 @@ func hostDetailResponseForHost(ctx context.Context, svc fleet.Service, host *fle
 		HostDetail:  *host,
 		Status:      host.Status(time.Now()),
 		DisplayText: host.Hostname,
+		DisplayName: host.DisplayName(),
 		Geolocation: svc.LookupGeoIP(ctx, host.PublicIP),
 	}, nil
 }
@@ -67,13 +48,19 @@ type listHostsRequest struct {
 }
 
 type listHostsResponse struct {
-	Hosts    []HostResponse  `json:"hosts"`
-	Software *fleet.Software `json:"software,omitempty"`
+	Hosts    []fleet.HostResponse `json:"hosts"`
+	Software *fleet.Software      `json:"software,omitempty"`
 	// MDMSolution is populated with the MDM solution corresponding to the mdm_id
 	// filter if one is provided with the request (and it exists in the
 	// database). It is nil otherwise and absent of the JSON response payload.
-	MDMSolution *fleet.AggregatedMDMSolutions `json:"mobile_device_management_solution,omitempty"`
-	Err         error                         `json:"error,omitempty"`
+	MDMSolution *fleet.MDMSolution `json:"mobile_device_management_solution,omitempty"`
+	// MunkiIssue is populated with the munki issue corresponding to the
+	// munki_issue_id filter if one is provided with the request (and it exists
+	// in the database). It is nil otherwise and absent of the JSON response
+	// payload.
+	MunkiIssue *fleet.MunkiIssue `json:"munki_issue,omitempty"`
+
+	Err error `json:"error,omitempty"`
 }
 
 func (r listHostsResponse) error() error { return r.Err }
@@ -90,11 +77,20 @@ func listHostsEndpoint(ctx context.Context, request interface{}, svc fleet.Servi
 		}
 	}
 
-	var mdmSolution *fleet.AggregatedMDMSolutions
+	var mdmSolution *fleet.MDMSolution
 	if req.Opts.MDMIDFilter != nil {
 		var err error
-		mdmSolution, err = svc.AggregatedMDMSolutions(ctx, req.Opts.TeamFilter, *req.Opts.MDMIDFilter)
-		if err != nil {
+		mdmSolution, err = svc.GetMDMSolution(ctx, *req.Opts.MDMIDFilter)
+		if err != nil && !fleet.IsNotFound(err) { // ignore not found, just return nil for the MDM solution in that case
+			return listHostsResponse{Err: err}, nil
+		}
+	}
+
+	var munkiIssue *fleet.MunkiIssue
+	if req.Opts.MunkiIssueIDFilter != nil {
+		var err error
+		munkiIssue, err = svc.GetMunkiIssue(ctx, *req.Opts.MunkiIssueIDFilter)
+		if err != nil && !fleet.IsNotFound(err) { // ignore not found, just return nil for the munki issue in that case
 			return listHostsResponse{Err: err}, nil
 		}
 	}
@@ -104,48 +100,37 @@ func listHostsEndpoint(ctx context.Context, request interface{}, svc fleet.Servi
 		return listHostsResponse{Err: err}, nil
 	}
 
-	hostResponses := make([]HostResponse, len(hosts))
+	hostResponses := make([]fleet.HostResponse, len(hosts))
 	for i, host := range hosts {
-		h, err := hostResponseForHost(ctx, svc, host)
+		h, err := fleet.HostResponseForHost(ctx, svc, host)
 		if err != nil {
 			return listHostsResponse{Err: err}, nil
 		}
 
 		hostResponses[i] = *h
 	}
-	return listHostsResponse{Hosts: hostResponses, Software: software, MDMSolution: mdmSolution}, nil
+	return listHostsResponse{
+		Hosts:       hostResponses,
+		Software:    software,
+		MDMSolution: mdmSolution,
+		MunkiIssue:  munkiIssue,
+	}, nil
 }
 
-func (svc *Service) AggregatedMDMSolutions(ctx context.Context, teamID *uint, mdmID uint) (*fleet.AggregatedMDMSolutions, error) {
-	if err := svc.authz.Authorize(ctx, &fleet.Host{TeamID: teamID}, fleet.ActionList); err != nil {
+func (svc *Service) GetMDMSolution(ctx context.Context, mdmID uint) (*fleet.MDMSolution, error) {
+	// require list hosts permission to view this information
+	if err := svc.authz.Authorize(ctx, &fleet.Host{}, fleet.ActionList); err != nil {
 		return nil, err
 	}
+	return svc.ds.GetMDMSolution(ctx, mdmID)
+}
 
-	if teamID != nil {
-		_, err := svc.ds.Team(ctx, *teamID)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// it is expected that there will be relatively few MDM solutions. This
-	// returns the slice of all aggregated stats (one entry per mdm_id), and we
-	// then iterate to return only the one that was requested (the slice is
-	// stored as-is in a JSON field in the database).
-	sols, _, err := svc.ds.AggregatedMDMSolutions(ctx, teamID)
-	if err != nil {
+func (svc *Service) GetMunkiIssue(ctx context.Context, munkiIssueID uint) (*fleet.MunkiIssue, error) {
+	// require list hosts permission to view this information
+	if err := svc.authz.Authorize(ctx, &fleet.Host{}, fleet.ActionList); err != nil {
 		return nil, err
 	}
-
-	for _, sol := range sols {
-		// don't take the address of the loop variable (although it could be ok
-		// here, but just bad practice)
-		sol := sol
-		if sol.ID == mdmID {
-			return &sol, nil
-		}
-	}
-	return nil, nil
+	return svc.ds.GetMunkiIssue(ctx, munkiIssueID)
 }
 
 func (svc *Service) ListHosts(ctx context.Context, opt fleet.HostListOptions) ([]*fleet.Host, error) {
@@ -158,6 +143,11 @@ func (svc *Service) ListHosts(ctx context.Context, opt fleet.HostListOptions) ([
 		return nil, fleet.ErrNoContext
 	}
 	filter := fleet.TeamFilter{User: vc.User, IncludeObserver: true}
+
+	if !svc.license.IsPremium() {
+		// the low disk space filter is premium-only
+		opt.LowDiskSpaceFilter = nil
+	}
 
 	return svc.ds.ListHosts(ctx, filter, opt)
 }
@@ -204,7 +194,7 @@ func (svc *Service) DeleteHosts(ctx context.Context, ids []uint, opts fleet.Host
 	}
 
 	if len(ids) > 0 && (lid != nil || !opts.Empty()) {
-		return &badRequestError{"Cannot specify a list of ids and filters at the same time"}
+		return &fleet.BadRequestError{Message: "Cannot specify a list of ids and filters at the same time"}
 	}
 
 	if len(ids) > 0 {
@@ -270,6 +260,11 @@ func (svc *Service) countHostFromFilters(ctx context.Context, labelID *uint, opt
 		return 0, err
 	}
 
+	if !svc.license.IsPremium() {
+		// the low disk space filter is premium-only
+		opt.LowDiskSpaceFilter = nil
+	}
+
 	var count int
 	if labelID != nil {
 		count, err = svc.ds.CountHostsInLabel(ctx, filter, *labelID, opt)
@@ -299,8 +294,8 @@ type searchHostsRequest struct {
 }
 
 type searchHostsResponse struct {
-	Hosts []*hostSearchResult `json:"hosts"`
-	Err   error               `json:"error,omitempty"`
+	Hosts []*fleet.HostResponse `json:"hosts"`
+	Err   error                 `json:"error,omitempty"`
 }
 
 func (r searchHostsResponse) error() error { return r.Err }
@@ -313,18 +308,10 @@ func searchHostsEndpoint(ctx context.Context, request interface{}, svc fleet.Ser
 		return searchHostsResponse{Err: err}, nil
 	}
 
-	results := []*hostSearchResult{}
+	results := []*fleet.HostResponse{}
 
 	for _, h := range hosts {
-		results = append(results,
-			&hostSearchResult{
-				HostResponse{
-					Host:   h,
-					Status: h.Status(time.Now()),
-				},
-				h.Hostname,
-			},
-		)
+		results = append(results, fleet.HostResponseForHostCheap(h))
 	}
 
 	return searchHostsResponse{
@@ -449,8 +436,9 @@ func (svc *Service) checkWriteForHostIDs(ctx context.Context, ids []uint) error 
 ////////////////////////////////////////////////////////////////////////////////
 
 type getHostSummaryRequest struct {
-	TeamID   *uint   `query:"team_id,optional"`
-	Platform *string `query:"platform,optional"`
+	TeamID       *uint   `query:"team_id,optional"`
+	Platform     *string `query:"platform,optional"`
+	LowDiskSpace *int    `query:"low_disk_space,optional"`
 }
 
 type getHostSummaryResponse struct {
@@ -462,7 +450,14 @@ func (r getHostSummaryResponse) error() error { return r.Err }
 
 func getHostSummaryEndpoint(ctx context.Context, request interface{}, svc fleet.Service) (interface{}, error) {
 	req := request.(*getHostSummaryRequest)
-	summary, err := svc.GetHostSummary(ctx, req.TeamID, req.Platform)
+	if req.LowDiskSpace != nil {
+		if *req.LowDiskSpace < 1 || *req.LowDiskSpace > 100 {
+			err := ctxerr.Errorf(ctx, "invalid low_disk_space threshold, must be between 1 and 100: %d", *req.LowDiskSpace)
+			return getHostSummaryResponse{Err: err}, nil
+		}
+	}
+
+	summary, err := svc.GetHostSummary(ctx, req.TeamID, req.Platform, req.LowDiskSpace)
 	if err != nil {
 		return getHostSummaryResponse{Err: err}, nil
 	}
@@ -473,7 +468,7 @@ func getHostSummaryEndpoint(ctx context.Context, request interface{}, svc fleet.
 	return resp, nil
 }
 
-func (svc *Service) GetHostSummary(ctx context.Context, teamID *uint, platform *string) (*fleet.HostSummary, error) {
+func (svc *Service) GetHostSummary(ctx context.Context, teamID *uint, platform *string, lowDiskSpace *int) (*fleet.HostSummary, error) {
 	if err := svc.authz.Authorize(ctx, &fleet.Host{TeamID: teamID}, fleet.ActionList); err != nil {
 		return nil, err
 	}
@@ -483,7 +478,11 @@ func (svc *Service) GetHostSummary(ctx context.Context, teamID *uint, platform *
 	}
 	filter := fleet.TeamFilter{User: vc.User, IncludeObserver: true, TeamID: teamID}
 
-	hostSummary, err := svc.ds.GenerateHostStatusStatistics(ctx, filter, svc.clock.Now(), platform)
+	if !svc.license.IsPremium() {
+		lowDiskSpace = nil
+	}
+
+	hostSummary, err := svc.ds.GenerateHostStatusStatistics(ctx, filter, svc.clock.Now(), platform, lowDiskSpace)
 	if err != nil {
 		return nil, err
 	}
@@ -931,7 +930,7 @@ func (svc *Service) MacadminsData(ctx context.Context, id uint) (*fleet.Macadmin
 	}
 
 	var munkiInfo *fleet.HostMunkiInfo
-	switch version, err := svc.ds.GetMunkiVersion(ctx, id); {
+	switch version, err := svc.ds.GetHostMunkiVersion(ctx, id); {
 	case err != nil && !fleet.IsNotFound(err):
 		return nil, err
 	case err == nil:
@@ -939,20 +938,29 @@ func (svc *Service) MacadminsData(ctx context.Context, id uint) (*fleet.Macadmin
 	}
 
 	var mdm *fleet.HostMDM
-	switch hmdm, err := svc.ds.GetMDM(ctx, id); {
+	switch hmdm, err := svc.ds.GetHostMDM(ctx, id); {
 	case err != nil && !fleet.IsNotFound(err):
 		return nil, err
 	case err == nil:
 		mdm = hmdm
 	}
 
-	if munkiInfo == nil && mdm == nil {
+	var munkiIssues []*fleet.HostMunkiIssue
+	switch issues, err := svc.ds.GetHostMunkiIssues(ctx, id); {
+	case err != nil:
+		return nil, err
+	case err == nil:
+		munkiIssues = issues
+	}
+
+	if munkiInfo == nil && mdm == nil && len(munkiIssues) == 0 {
 		return nil, nil
 	}
 
 	data := &fleet.MacadminsData{
-		Munki: munkiInfo,
-		MDM:   mdm,
+		Munki:       munkiInfo,
+		MDM:         mdm,
+		MunkiIssues: munkiIssues,
 	}
 
 	return data, nil
@@ -1002,6 +1010,12 @@ func (svc *Service) AggregatedMacadminsData(ctx context.Context, teamID *uint) (
 	}
 	agg.MunkiVersions = versions
 
+	issues, munkiIssUpdatedAt, err := svc.ds.AggregatedMunkiIssues(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+	agg.MunkiIssues = issues
+
 	status, mdmUpdatedAt, err := svc.ds.AggregatedMDMStatus(ctx, teamID)
 	if err != nil {
 		return nil, err
@@ -1015,6 +1029,9 @@ func (svc *Service) AggregatedMacadminsData(ctx context.Context, teamID *uint) (
 	agg.MDMSolutions = solutions
 
 	agg.CountsUpdatedAt = munkiUpdatedAt
+	if munkiIssUpdatedAt.After(agg.CountsUpdatedAt) {
+		agg.CountsUpdatedAt = munkiIssUpdatedAt
+	}
 	if mdmUpdatedAt.After(agg.CountsUpdatedAt) {
 		agg.CountsUpdatedAt = mdmUpdatedAt
 	}
@@ -1037,9 +1054,9 @@ type hostsReportRequest struct {
 }
 
 type hostsReportResponse struct {
-	Columns []string        `json:"-"` // used to control the generated csv, see the hijackRender method
-	Hosts   []*HostResponse `json:"-"` // they get rendered explicitly, in csv
-	Err     error           `json:"error,omitempty"`
+	Columns []string              `json:"-"` // used to control the generated csv, see the hijackRender method
+	Hosts   []*fleet.HostResponse `json:"-"` // they get rendered explicitly, in csv
+	Err     error                 `json:"error,omitempty"`
 }
 
 func (r hostsReportResponse) error() error { return r.Err }
@@ -1105,7 +1122,7 @@ func (r hostsReportResponse) hijackRender(ctx context.Context, w http.ResponseWr
 						// duplicating the list of columns from the Host's struct tags to a
 						// map and keep this in sync, for what is essentially a programmer
 						// mistake that should be caught and corrected early.
-						encodeError(ctx, &badRequestError{message: fmt.Sprintf("invalid column name: %q", col)}, w)
+						encodeError(ctx, &fleet.BadRequestError{Message: fmt.Sprintf("invalid column name: %q", col)}, w)
 						return
 					}
 					outRows[i] = append(outRows[i], rec[colIx])
@@ -1116,6 +1133,7 @@ func (r hostsReportResponse) hijackRender(ctx context.Context, w http.ResponseWr
 
 	w.Header().Add("Content-Disposition", fmt.Sprintf(`attachment; filename="Hosts %s.csv"`, time.Now().Format("2006-01-02")))
 	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
 	var err error
@@ -1179,9 +1197,9 @@ func hostsReportEndpoint(ctx context.Context, request interface{}, svc fleet.Ser
 		return hostsReportResponse{Err: err}, nil
 	}
 
-	hostResps := make([]*HostResponse, len(hosts))
+	hostResps := make([]*fleet.HostResponse, len(hosts))
 	for i, h := range hosts {
-		hr, err := hostResponseForHost(ctx, svc, h)
+		hr, err := fleet.HostResponseForHost(ctx, svc, h)
 		if err != nil {
 			return hostsReportResponse{Err: err}, nil
 		}
@@ -1191,9 +1209,10 @@ func hostsReportEndpoint(ctx context.Context, request interface{}, svc fleet.Ser
 }
 
 type osVersionsRequest struct {
-	TeamID            *uint   `query:"team_id,optional"`
-	Platform          *string `query:"platform,optional"`
-	OperatingSystemID *uint   `query:"operating_system_id,optional"`
+	TeamID   *uint   `query:"team_id,optional"`
+	Platform *string `query:"platform,optional"`
+	Name     *string `query:"os_name,optional"`
+	Version  *string `query:"os_name,optional"`
 }
 
 type osVersionsResponse struct {
@@ -1207,7 +1226,7 @@ func (r osVersionsResponse) error() error { return r.Err }
 func osVersionsEndpoint(ctx context.Context, request interface{}, svc fleet.Service) (interface{}, error) {
 	req := request.(*osVersionsRequest)
 
-	osVersions, err := svc.OSVersions(ctx, req.TeamID, req.Platform, req.OperatingSystemID)
+	osVersions, err := svc.OSVersions(ctx, req.TeamID, req.Platform, req.Name, req.Version)
 	if err != nil {
 		return &osVersionsResponse{Err: err}, nil
 	}
@@ -1218,12 +1237,20 @@ func osVersionsEndpoint(ctx context.Context, request interface{}, svc fleet.Serv
 	}, nil
 }
 
-func (svc *Service) OSVersions(ctx context.Context, teamID *uint, platform *string, osID *uint) (*fleet.OSVersions, error) {
+func (svc *Service) OSVersions(ctx context.Context, teamID *uint, platform *string, name *string, version *string) (*fleet.OSVersions, error) {
 	if err := svc.authz.Authorize(ctx, &fleet.Host{TeamID: teamID}, fleet.ActionList); err != nil {
 		return nil, err
 	}
 
-	osVersions, err := svc.ds.OSVersions(ctx, teamID, platform, osID)
+	if name != nil && version == nil {
+		return nil, &fleet.BadRequestError{Message: "Cannot specify os_name without os_version"}
+	}
+
+	if name == nil && version != nil {
+		return nil, &fleet.BadRequestError{Message: "Cannot specify os_version without os_name"}
+	}
+
+	osVersions, err := svc.ds.OSVersions(ctx, teamID, platform, name, version)
 	if err != nil && fleet.IsNotFound(err) {
 		// differentiate case where team was added after UpdateOSVersions last ran
 		if teamID != nil {
