@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/fleetdm/fleet/v4/server/contexts/license"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/mock"
 	"github.com/fleetdm/fleet/v4/server/service/externalsvc"
@@ -17,8 +18,8 @@ import (
 
 func TestJiraFailer(t *testing.T) {
 	ds := new(mock.Store)
-	ds.HostsByCVEFunc = func(ctx context.Context, cve string) ([]*fleet.HostShort, error) {
-		return []*fleet.HostShort{{ID: 1, Hostname: "test"}}, nil
+	ds.HostsByCVEFunc = func(ctx context.Context, cve string) ([]fleet.HostVulnerabilitySummary, error) {
+		return []fleet.HostVulnerabilitySummary{{ID: 1, Hostname: "test"}}, nil
 	}
 	ds.AppConfigFunc = func(ctx context.Context) (*fleet.AppConfig, error) {
 		return &fleet.AppConfig{Integrations: fleet.Integrations{
@@ -30,7 +31,7 @@ func TestJiraFailer(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`
+		_, err := w.Write([]byte(`
 {
   "id": "10000",
   "key": "ED-24",
@@ -43,6 +44,7 @@ func TestJiraFailer(t *testing.T) {
     }
   }
 }`))
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -71,7 +73,7 @@ func TestJiraFailer(t *testing.T) {
 	cves := []string{"CVE-2018-1234", "CVE-2019-1234", "CVE-2020-1234", "CVE-2021-1234"}
 	for i := 0; i < 10; i++ {
 		cve := cves[i%len(cves)]
-		err := jira.Run(context.Background(), json.RawMessage(fmt.Sprintf(`{"cve":%q}`, cve)))
+		err := jira.Run(license.NewContext(context.Background(), &fleet.LicenseInfo{Tier: fleet.TierFree}), json.RawMessage(fmt.Sprintf(`{"vulnerability":{"cve":%q}}`, cve)))
 		if err != nil {
 			failedIndices = append(failedIndices, i)
 		}
@@ -87,8 +89,8 @@ func TestJiraFailer(t *testing.T) {
 
 func TestZendeskFailer(t *testing.T) {
 	ds := new(mock.Store)
-	ds.HostsByCVEFunc = func(ctx context.Context, cve string) ([]*fleet.HostShort, error) {
-		return []*fleet.HostShort{{ID: 1, Hostname: "test"}}, nil
+	ds.HostsByCVEFunc = func(ctx context.Context, cve string) ([]fleet.HostVulnerabilitySummary, error) {
+		return []fleet.HostVulnerabilitySummary{{ID: 1, Hostname: "test"}}, nil
 	}
 	ds.AppConfigFunc = func(ctx context.Context) (*fleet.AppConfig, error) {
 		return &fleet.AppConfig{Integrations: fleet.Integrations{
@@ -100,7 +102,8 @@ func TestZendeskFailer(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"ticket": {"id": 987}}`))
+		_, err := w.Write([]byte(`{"ticket": {"id": 987}}`))
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -129,7 +132,7 @@ func TestZendeskFailer(t *testing.T) {
 	cves := []string{"CVE-2018-1234", "CVE-2019-1234", "CVE-2020-1234", "CVE-2021-1234"}
 	for i := 0; i < 10; i++ {
 		cve := cves[i%len(cves)]
-		err := zendesk.Run(context.Background(), json.RawMessage(fmt.Sprintf(`{"cve":%q}`, cve)))
+		err := zendesk.Run(license.NewContext(context.Background(), &fleet.LicenseInfo{Tier: fleet.TierFree}), json.RawMessage(fmt.Sprintf(`{"vulnerability":{"cve":%q}}`, cve)))
 		if err != nil {
 			failedIndices = append(failedIndices, i)
 		}

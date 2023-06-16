@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -27,17 +26,16 @@ import (
 	"github.com/fleetdm/fleet/v4/server/datastore/mysql/migrations/data"
 	"github.com/fleetdm/fleet/v4/server/datastore/mysql/migrations/tables"
 	"github.com/fleetdm/fleet/v4/server/fleet"
-	"github.com/fleetdm/fleet/v4/server/mdm/apple/scep/scep_mysql"
 	"github.com/fleetdm/goose"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/go-sql-driver/mysql"
 	"github.com/hashicorp/go-multierror"
 	"github.com/jmoiron/sqlx"
-	"github.com/micromdm/nanodep/client"
 	nanodep_client "github.com/micromdm/nanodep/client"
 	nanodep_mysql "github.com/micromdm/nanodep/storage/mysql"
 	nanomdm_mysql "github.com/micromdm/nanomdm/storage/mysql"
+	scep_depot "github.com/micromdm/scep/v2/depot"
 	"github.com/ngrok/sqlmw"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
@@ -109,14 +107,10 @@ func (ds *Datastore) loadOrPrepareStmt(ctx context.Context, query string) *sqlx.
 	return stmt
 }
 
-// NewMDMAppleSCEPDepot returns a *scep_mysql.MySQLDepot that uses the Datastore
+// NewMDMAppleSCEPDepot returns a scep_depot.Depot that uses the Datastore
 // underlying MySQL writer *sql.DB.
-func (ds *Datastore) NewMDMAppleSCEPDepot(caCertPEM []byte, caKeyPEM []byte) (*scep_mysql.MySQLDepot, error) {
-	s, err := scep_mysql.NewMySQLDepot(ds.writer.DB, caCertPEM, caKeyPEM)
-	if err != nil {
-		return nil, err
-	}
-	return s, nil
+func (ds *Datastore) NewSCEPDepot(caCertPEM []byte, caKeyPEM []byte) (scep_depot.Depot, error) {
+	return newSCEPDepot(ds.writer.DB, caCertPEM, caKeyPEM)
 }
 
 // NewMDMAppleMDMStorage returns a MySQL nanomdm storage that uses the Datastore
@@ -175,19 +169,15 @@ func (s *NanoMDMStorage) StorePushCert(ctx context.Context, pemCert, pemKey []by
 
 // NewMDMAppleDEPStorage returns a MySQL nanodep storage that uses the Datastore
 // underlying MySQL writer *sql.DB.
-func (ds *Datastore) NewMDMAppleDEPStorage(depTokens []byte) (*NanoDEPStorage, error) {
+func (ds *Datastore) NewMDMAppleDEPStorage(tok nanodep_client.OAuth1Tokens) (*NanoDEPStorage, error) {
 	s, err := nanodep_mysql.New(nanodep_mysql.WithDB(ds.writer.DB))
 	if err != nil {
 		return nil, err
 	}
 
-	var tokens nanodep_client.OAuth1Tokens
-	if err := json.Unmarshal(depTokens, &tokens); err != nil {
-		return nil, err
-	}
 	return &NanoDEPStorage{
 		MySQLStorage: s,
-		tokens:       tokens,
+		tokens:       tok,
 	}, nil
 }
 
@@ -210,7 +200,7 @@ func (s *NanoDEPStorage) RetrieveAuthTokens(ctx context.Context, name string) (*
 //
 // Leaving this unimplemented as DEP auth tokens are not stored in MySQL storage,
 // instead they are loaded to memory at startup.
-func (s *NanoDEPStorage) StoreAuthTokens(ctx context.Context, name string, tokens *client.OAuth1Tokens) error {
+func (s *NanoDEPStorage) StoreAuthTokens(ctx context.Context, name string, tokens *nanodep_client.OAuth1Tokens) error {
 	return errors.New("unimplemented")
 }
 
@@ -341,7 +331,9 @@ func New(config config.MysqlConfig, c clock.Clock, opts ...DBOption) (*Datastore
 
 	for _, setOpt := range opts {
 		if setOpt != nil {
-			setOpt(options)
+			if err := setOpt(options); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -508,8 +500,14 @@ func (ds *Datastore) loadMigrations(
 	reader dbReader,
 ) (tableRecs []int64, dataRecs []int64, err error) {
 	// We need to run the following to trigger the creation of the migration status tables.
-	tables.MigrationClient.GetDBVersion(writer)
-	data.MigrationClient.GetDBVersion(writer)
+	_, err = tables.MigrationClient.GetDBVersion(writer)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, err = data.MigrationClient.GetDBVersion(writer)
+	if err != nil {
+		return nil, nil, err
+	}
 	// version_id > 0 to skip the bootstrap migration that creates the migration tables.
 	if err := sqlx.SelectContext(ctx, reader, &tableRecs,
 		"SELECT version_id FROM "+tables.MigrationClient.TableName+" WHERE version_id > 0 AND is_applied ORDER BY id ASC",
@@ -771,12 +769,22 @@ func appendLimitOffsetToSelect(ds *goqu.SelectDataset, opts fleet.ListOptions) *
 	return ds
 }
 
-func appendListOptionsToSQL(sql string, opts fleet.ListOptions) string {
+// Appends the list options SQL to the passed in SQL string. This appended
+// SQL is determined by the passed in options.
+//
+// NOTE: this method will mutate the options argument if no explicit PerPage
+// option is set (a default value will be provided) or if the cursor approach is used.
+func appendListOptionsToSQL(sql string, opts *fleet.ListOptions) string {
 	sql, _ = appendListOptionsWithCursorToSQL(sql, nil, opts)
 	return sql
 }
 
-func appendListOptionsWithCursorToSQL(sql string, params []interface{}, opts fleet.ListOptions) (string, []interface{}) {
+// Appends the list options SQL to the passed in SQL string. This appended
+// SQL is determined by the passed in options. This supports cursor options
+//
+// NOTE: this method will mutate the options argument if no explicit PerPage option
+// is set (a default value will be provided) or if the cursor approach is used.
+func appendListOptionsWithCursorToSQL(sql string, params []interface{}, opts *fleet.ListOptions) (string, []interface{}) {
 	orderKey := sanitizeColumn(opts.OrderKey)
 
 	if opts.After != "" && orderKey != "" {
@@ -808,14 +816,18 @@ func appendListOptionsWithCursorToSQL(sql string, params []interface{}, opts fle
 
 		sql = fmt.Sprintf("%s ORDER BY %s %s", sql, orderKey, direction)
 	}
-	// REVIEW: If caller doesn't supply a limit apply a default limit of 1000
-	// to insure that an unbounded query with many results doesn't consume too
-	// much memory or hang
+	// REVIEW: If caller doesn't supply a limit apply a default limit to insure
+	// that an unbounded query with many results doesn't consume too much memory
+	// or hang
 	if opts.PerPage == 0 {
 		opts.PerPage = defaultSelectLimit
 	}
 
-	sql = fmt.Sprintf("%s LIMIT %d", sql, opts.PerPage)
+	perPage := opts.PerPage
+	if opts.IncludeMetadata {
+		perPage++
+	}
+	sql = fmt.Sprintf("%s LIMIT %d", sql, perPage)
 
 	offset := opts.PerPage * opts.Page
 
@@ -847,15 +859,13 @@ func (ds *Datastore) whereFilterHostsByTeams(filter fleet.TeamFilter, hostKey st
 
 	if filter.User.GlobalRole != nil {
 		switch *filter.User.GlobalRole {
-		case fleet.RoleAdmin, fleet.RoleMaintainer:
+		case fleet.RoleAdmin, fleet.RoleMaintainer, fleet.RoleObserverPlus:
 			return defaultAllowClause
-
 		case fleet.RoleObserver:
 			if filter.IncludeObserver {
 				return defaultAllowClause
 			}
 			return "FALSE"
-
 		default:
 			// Fall through to specific teams
 		}
@@ -865,7 +875,9 @@ func (ds *Datastore) whereFilterHostsByTeams(filter fleet.TeamFilter, hostKey st
 	var idStrs []string
 	var teamIDSeen bool
 	for _, team := range filter.User.Teams {
-		if team.Role == fleet.RoleAdmin || team.Role == fleet.RoleMaintainer ||
+		if team.Role == fleet.RoleAdmin ||
+			team.Role == fleet.RoleMaintainer ||
+			team.Role == fleet.RoleObserverPlus ||
 			(team.Role == fleet.RoleObserver && filter.IncludeObserver) {
 			idStrs = append(idStrs, strconv.Itoa(int(team.ID)))
 			if filter.TeamID != nil && *filter.TeamID == team.ID {
@@ -906,16 +918,13 @@ func (ds *Datastore) whereFilterTeams(filter fleet.TeamFilter, teamKey string) s
 
 	if filter.User.GlobalRole != nil {
 		switch *filter.User.GlobalRole {
-
-		case fleet.RoleAdmin, fleet.RoleMaintainer:
+		case fleet.RoleAdmin, fleet.RoleMaintainer, fleet.RoleObserverPlus:
 			return "TRUE"
-
 		case fleet.RoleObserver:
 			if filter.IncludeObserver {
 				return "TRUE"
 			}
 			return "FALSE"
-
 		default:
 			// Fall through to specific teams
 		}
@@ -924,7 +933,9 @@ func (ds *Datastore) whereFilterTeams(filter fleet.TeamFilter, teamKey string) s
 	// Collect matching teams
 	var idStrs []string
 	for _, team := range filter.User.Teams {
-		if team.Role == fleet.RoleAdmin || team.Role == fleet.RoleMaintainer ||
+		if team.Role == fleet.RoleAdmin ||
+			team.Role == fleet.RoleMaintainer ||
+			team.Role == fleet.RoleObserverPlus ||
 			(team.Role == fleet.RoleObserver && filter.IncludeObserver) {
 			idStrs = append(idStrs, strconv.Itoa(int(team.ID)))
 		}
@@ -975,7 +986,11 @@ func registerTLS(conf config.MysqlConfig) error {
 // provided configuration.
 func generateMysqlConnectionString(conf config.MysqlConfig) string {
 	params := url.Values{
-		"charset":              []string{"utf8mb4"},
+		// using collation implicitly sets the charset too
+		// and it's the recommended way to do it per the
+		// driver documentation:
+		// https://github.com/go-sql-driver/mysql#charset
+		"collation":            []string{"utf8mb4_unicode_ci"},
 		"parseTime":            []string{"true"},
 		"loc":                  []string{"UTC"},
 		"time_zone":            []string{"'-00:00'"},
@@ -1018,6 +1033,8 @@ func isChildForeignKeyError(err error) bool {
 	return mysqlErr.Number == ER_NO_REFERENCED_ROW_2
 }
 
+type patternReplacer func(string) string
+
 // likePattern returns a pattern to match m with LIKE.
 func likePattern(m string) string {
 	m = strings.Replace(m, "_", "\\_", -1)
@@ -1025,15 +1042,24 @@ func likePattern(m string) string {
 	return "%" + m + "%"
 }
 
+// noneReplacer doesn't manipulate
+func noneReplacer(m string) string {
+	return m
+}
+
 // searchLike adds SQL and parameters for a "search" using LIKE syntax.
 //
 // The input columns must be sanitized if they are provided by the user.
 func searchLike(sql string, params []interface{}, match string, columns ...string) (string, []interface{}) {
+	return searchLikePattern(sql, params, match, likePattern, columns...)
+}
+
+func searchLikePattern(sql string, params []interface{}, match string, replacer patternReplacer, columns ...string) (string, []interface{}) {
 	if len(columns) == 0 || len(match) == 0 {
 		return sql, params
 	}
 
-	pattern := likePattern(match)
+	pattern := replacer(match)
 	ors := make([]string, 0, len(columns))
 	for _, column := range columns {
 		ors = append(ors, column+" LIKE ?")
@@ -1056,17 +1082,45 @@ func searchLike(sql string, params []interface{}, match string, columns ...strin
 // in this.
 var rxLooseEmail = regexp.MustCompile(`^[^\s@]+@[^\s@\.]+\..+$`)
 
-func hostSearchLike(sql string, params []interface{}, match string, columns ...string) (string, []interface{}) {
+/*
+This regex matches any occurrence of a character from the ASCII character set followed by one or more characters that are not from the ASCII character set.
+The first part `[[:ascii:]]` matches any character that is within the ASCII range (0 to 127 in the ASCII table),
+while the second part `[^[:ascii:]]` matches any character that is not within the ASCII range.
+So, when these two parts are combined with no space in between, the resulting regex matches any
+sequence of characters where the first character is within the ASCII range and the following characters are not within the ASCII range.
+*/
+var nonascii = regexp.MustCompile(`(?P<ascii>[[:ascii:]])(?P<nonascii>[^[:ascii:]]+)`)
+var nonacsiiReplace = regexp.MustCompile(`[^[:ascii:]]`)
+
+func hostSearchLike(sql string, params []interface{}, match string, columns ...string) (string, []interface{}, bool) {
+	var matchesEmail bool
 	base, args := searchLike(sql, params, match, columns...)
 
 	// special-case for hosts: if match looks like an email address, add searching
 	// in host_emails table as an option, in addition to the provided columns.
 	if rxLooseEmail.MatchString(match) {
+		matchesEmail = true
 		// remove the closing paren and add the email condition to the list
 		base = strings.TrimSuffix(base, ")") + " OR (" + ` EXISTS (SELECT 1 FROM host_emails he WHERE he.host_id = h.id AND he.email LIKE ?)))`
 		args = append(args, likePattern(match))
 	}
-	return base, args
+	return base, args, matchesEmail
+}
+
+func hostSearchLikeAny(sql string, params []interface{}, match string, columns ...string) (string, []interface{}) {
+	return searchLikePattern(sql, params, buildWildcardMatchPhrase(match), noneReplacer, columns...)
+}
+
+func buildWildcardMatchPhrase(matchQuery string) string {
+	return replaceMatchAny(likePattern(matchQuery))
+}
+
+func hasNonASCIIRegex(s string) bool {
+	return nonascii.MatchString(s)
+}
+
+func replaceMatchAny(s string) string {
+	return nonacsiiReplace.ReplaceAllString(s, "_")
 }
 
 func (ds *Datastore) InnoDBStatus(ctx context.Context) (string, error) {
@@ -1091,6 +1145,20 @@ func (ds *Datastore) ProcessList(ctx context.Context) ([]fleet.MySQLProcess, err
 		return nil, ctxerr.Wrap(ctx, err, "Getting process list")
 	}
 	return processList, nil
+}
+
+func insertOnDuplicateDidInsert(res sql.Result) bool {
+	// Note that connection string sets CLIENT_FOUND_ROWS (see
+	// generateMysqlConnectionString in this package), so LastInsertId is 0
+	// and RowsAffected 1 when a row is set to its current values.
+	//
+	// See [the docs][1] or @mna's comment in `insertOnDuplicateDidUpdate`
+	// below for more details
+	//
+	// [1]: https://dev.mysql.com/doc/refman/5.7/en/insert-on-duplicate.html
+	lastID, _ := res.LastInsertId()
+	affected, _ := res.RowsAffected()
+	return lastID != 0 && affected == 1
 }
 
 func insertOnDuplicateDidUpdate(res sql.Result) bool {

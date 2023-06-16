@@ -21,13 +21,11 @@ import Modal from "components/Modal";
 import UserSettingsForm from "components/forms/UserSettingsForm";
 import InfoBanner from "components/InfoBanner";
 import SecretField from "components/EnrollSecrets/SecretField";
-import SandboxGate from "components/Sandbox/SandboxGate";
-import SandboxDemoMessage from "components/Sandbox/SandboxDemoMessage";
 import MainContent from "components/MainContent";
 import SidePanelContent from "components/SidePanelContent";
+import CustomLink from "components/CustomLink";
 
 import UserSidePanel from "./UserSidePanel";
-import ExternalLinkIcon from "../../../assets/images/icon-external-link-12x12@2x.png";
 
 const baseClass = "user-settings";
 
@@ -188,14 +186,11 @@ const UserSettingsPage = ({
             <p>
               <strong>This token expires.</strong> If you want an API key for a
               permanent integration, create an&nbsp;
-              <a
-                href="https://fleetdm.com/docs/using-fleet/fleetctl-cli#using-fleetctl-with-an-api-only-user?utm_medium=fleetui&utm_campaign=get-api-token"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                API-only user
-                <img src={ExternalLinkIcon} alt="Open external link" />
-              </a>
+              <CustomLink
+                url="https://fleetdm.com/docs/using-fleet/fleetctl-cli#using-fleetctl-with-an-api-only-user?utm_medium=fleetui&utm_campaign=get-api-token"
+                text="API-only user"
+                newTab
+              />
               &nbsp;instead.
             </p>
           </InfoBanner>
@@ -205,14 +200,11 @@ const UserSettingsPage = ({
           <p className="token-message">
             This token is intended for SSO users to authenticate in the fleetctl
             CLI. It expires based on the{" "}
-            <a
-              href="https://fleetdm.com/docs/deploying/configuration#session-duration?utm_medium=fleetui&utm_campaign=get-api-token"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              session duration configuration
-              <img src={ExternalLinkIcon} alt="Open external link" />
-            </a>
+            <CustomLink
+              url="https://fleetdm.com/docs/deploying/configuration#session-duration?utm_medium=fleetui&utm_campaign=get-api-token"
+              text="session duration configuration"
+              newTab
+            />
           </p>
           <div className="modal-cta-wrap">
             <Button onClick={onToggleApiTokenModal} type="button">
@@ -231,15 +223,7 @@ const UserSettingsPage = ({
   return (
     <>
       <MainContent className={baseClass}>
-        <SandboxGate
-          fallbackComponent={() => (
-            <SandboxDemoMessage
-              className={`${baseClass}__sandboxMode`}
-              message="Account management is only available in self-managed Fleet"
-              utmSource="fleet-ui-my-account-page"
-            />
-          )}
-        >
+        <>
           <div className={`${baseClass}__manage`}>
             <h1>My account</h1>
             <UserSettingsForm
@@ -248,23 +232,21 @@ const UserSettingsPage = ({
               onCancel={onCancel}
               pendingEmail={pendingEmail}
               serverErrors={errors}
-              smtpConfigured={config?.smtp_settings.configured}
+              smtpConfigured={config?.smtp_settings?.configured || false}
             />
           </div>
           {renderEmailModal()}
           {renderPasswordModal()}
           {renderApiTokenModal()}
-        </SandboxGate>
+        </>
       </MainContent>
-      <SandboxGate>
-        <SidePanelContent>
-          <UserSidePanel
-            currentUser={currentUser}
-            onChangePassword={onShowPasswordModal}
-            onGetApiToken={onShowApiTokenModal}
-          />
-        </SidePanelContent>
-      </SandboxGate>
+      <SidePanelContent>
+        <UserSidePanel
+          currentUser={currentUser}
+          onChangePassword={onShowPasswordModal}
+          onGetApiToken={onShowApiTokenModal}
+        />
+      </SidePanelContent>
     </>
   );
 };

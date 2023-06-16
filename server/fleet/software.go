@@ -1,42 +1,18 @@
 package fleet
 
 import (
-	"fmt"
+	"strings"
 	"time"
 )
 
-type CVE struct {
-	CVE         string `json:"cve" db:"cve"`
-	DetailsLink string `json:"details_link" db:"-"`
-	// These are double pointers so that we can omit them AND return nulls when needed.
-	// 1. omitted when using the free tier
-	// 2. null when using the premium tier, but there is no value available. This may be due to an issue with syncing cve scores.
-	// 3. non-null when using the premium tier, and value is available.
-	CVSSScore        **float64 `json:"cvss_score,omitempty" db:"cvss_score"`
-	EPSSProbability  **float64 `json:"epss_probability,omitempty" db:"epss_probability"`
-	CISAKnownExploit **bool    `json:"cisa_known_exploit,omitempty" db:"cisa_known_exploit"`
-}
-
-type CVEMeta struct {
-	CVE string `db:"cve"`
-	// CVSSScore is the Common Vulnerability Scoring System (CVSS) base score v3. The base score ranges from 0 - 10 and
-	// takes into account several different metrics.
-	// See https://nvd.nist.gov/vuln-metrics/cvss.
-	CVSSScore *float64 `db:"cvss_score"`
-	// EPSSProbability is the Exploit Prediction Scoring System (EPSS) score. It is the probability
-	// that a software vulnerability will be exploited in the next 30 days.
-	// See https://www.first.org/epss/.
-	EPSSProbability *float64 `db:"epss_probability"`
-	// CISAKnownExploit is whether the the software vulnerability is a known exploit according to CISA.
-	// See https://www.cisa.gov/known-exploited-vulnerabilities.
-	CISAKnownExploit *bool `db:"cisa_known_exploit"`
-	// Published is when the cve was published according to NIST.score
-	Published *time.Time `db:"published"`
-}
-
 // Must be kept in sync with the vendor column definition.
-const SoftwareVendorMaxLength = 114
-const SoftwareVendorMaxLengthFmt = "%.111s..."
+const (
+	SoftwareVendorMaxLength    = 114
+	SoftwareVendorMaxLengthFmt = "%.111s..."
+	SoftwareFieldSeparator     = "\u0000"
+)
+
+type Vulnerabilities []CVE
 
 // Software is a named and versioned piece of software installed on a device.
 type Software struct {
@@ -67,7 +43,7 @@ type Software struct {
 	// GenerateCPE is the CPE23 string that corresponds to the current software
 	GenerateCPE string `json:"generated_cpe" db:"generated_cpe"`
 
-	// Vulnerabilities lists all the found CVEs for the CPE
+	// Vulnerabilities lists all found vulnerablities
 	Vulnerabilities Vulnerabilities `json:"vulnerabilities"`
 	// HostsCount indicates the number of hosts with that software, filled only
 	// if explicitly requested.
@@ -85,6 +61,17 @@ func (Software) AuthzType() string {
 	return "software"
 }
 
+// ToUniqueStr creates a unique string representation of the software
+func (s Software) ToUniqueStr() string {
+	ss := []string{s.Name, s.Version, s.Source, s.BundleIdentifier}
+	// Release, Vendor and Arch fields were added on a migration,
+	// thus we only include them in the string if at least one of them is defined.
+	if s.Release != "" || s.Vendor != "" || s.Arch != "" {
+		ss = append(ss, s.Release, s.Vendor, s.Arch)
+	}
+	return strings.Join(ss, SoftwareFieldSeparator)
+}
+
 // AuthzSoftwareInventory is used for access controls on software inventory.
 type AuthzSoftwareInventory struct {
 	// TeamID is the ID of the team. A value of nil means global scope.
@@ -96,12 +83,21 @@ func (s *AuthzSoftwareInventory) AuthzType() string {
 	return "software_inventory"
 }
 
-type Vulnerabilities []CVE
+type HostSoftwareEntry struct {
+	// Software details
+	Software
+	// Where this software was installed on the host, value is derived from the
+	// host_software_installed_paths table.
+	InstalledPaths []string `json:"installed_paths,omitempty"`
+}
 
 // HostSoftware is the set of software installed on a specific host
 type HostSoftware struct {
 	// Software is the software information.
-	Software []Software `json:"software,omitempty" csv:"-"`
+	Software []HostSoftwareEntry `json:"software,omitempty" csv:"-"`
+
+	// SoftwareUpdatedAt is the time that the host software was last updated
+	SoftwareUpdatedAt time.Time `json:"software_updated_at" db:"software_updated_at" csv:"software_updated_at"`
 }
 
 type SoftwareIterator interface {
@@ -126,33 +122,51 @@ type SoftwareListOptions struct {
 	WithHostCounts bool
 }
 
-// SoftwareCPE represents an entry in the `software_cpe` table
-type SoftwareCPE struct {
-	ID         uint   `db:"id"`
-	SoftwareID uint   `db:"software_id"`
-	CPE        string `db:"cpe"`
+type SoftwareIterQueryOptions struct {
+	ExcludedSources []string // what sources to exclude
+	IncludedSources []string // what sources to include
 }
 
-// SoftwareVulnerability identifies a vulnerability on a specific software.
-type SoftwareVulnerability struct {
-	SoftwareID uint   `db:"software_id"`
-	CVE        string `db:"cve"`
+// IsValid checks that either ExcludedSources or IncludedSources is specified but not both
+func (siqo SoftwareIterQueryOptions) IsValid() bool {
+	return !(len(siqo.IncludedSources) != 0 && len(siqo.ExcludedSources) != 0)
 }
 
-// String implements fmt.Stringer.
-func (sv SoftwareVulnerability) String() string {
-	return fmt.Sprintf("{%d,%s}", sv.SoftwareID, sv.CVE)
+// UpdateHostSoftwareDBResult stores the 'result' of calling 'ds.UpdateHostSoftware' for a host,
+// contains the software installed on the host pre-mutations all the mutations performed: what was
+// inserted and what was deleted.
+type UpdateHostSoftwareDBResult struct {
+	// What software was installed on the host before performing any mutations
+	WasCurrInstalled []Software
+	// What software was deleted
+	Deleted []Software
+	// What software was inserted
+	Inserted []Software
 }
 
-// Key returns a string representation of the SoftwareVulnerability
-func (sv *SoftwareVulnerability) Key() string {
-	return fmt.Sprintf("%d:%s", sv.SoftwareID, sv.CVE)
+// CurrInstalled returns all software that should be currently installed on the host by looking at
+// was currently installed, removing anything that was deleted and adding anything that was inserted
+func (uhsdbr *UpdateHostSoftwareDBResult) CurrInstalled() []Software {
+	var r []Software
+
+	if uhsdbr == nil {
+		return r
+	}
+
+	deleteMap := map[uint]struct{}{}
+	for _, d := range uhsdbr.Deleted {
+		deleteMap[d.ID] = struct{}{}
+	}
+
+	for _, c := range uhsdbr.WasCurrInstalled {
+		if _, ok := deleteMap[c.ID]; !ok {
+			r = append(r, c)
+		}
+	}
+
+	for _, i := range uhsdbr.Inserted {
+		r = append(r, i)
+	}
+
+	return r
 }
-
-type VulnerabilitySource int
-
-const (
-	NVDSource VulnerabilitySource = iota
-	UbuntuOVALSource
-	RHELOVALSource
-)

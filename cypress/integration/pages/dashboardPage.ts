@@ -4,7 +4,7 @@ const dashboardPage = {
   },
 
   switchesPlatform: (platform = "") => {
-    cy.getAttached(".homepage__platform_dropdown").click();
+    cy.getAttached(".dashboard-page__platform_dropdown").click();
     cy.getAttached(".Select-menu-outer").within(() => {
       cy.findAllByText(platform).click();
     });
@@ -13,10 +13,9 @@ const dashboardPage = {
   displaysCards: (platform = "", tier = "free") => {
     switch (platform) {
       case "macOS":
-        cy.getAttached(".homepage__wrapper").within(() => {
+        cy.getAttached(".dashboard-page__wrapper").within(() => {
           cy.findByText(/platform/i).should("exist");
           cy.getAttached(".hosts-summary").should("exist");
-          cy.getAttached(".home-mdm").should("exist");
           cy.getAttached(".operating-systems").should("exist");
           // "get" because we expect it not to exist
           cy.get(".home-software").should("not.exist");
@@ -31,7 +30,7 @@ const dashboardPage = {
         });
         break;
       case "Windows":
-        cy.getAttached(".homepage__wrapper").within(() => {
+        cy.getAttached(".dashboard-page__wrapper").within(() => {
           cy.findByText(/platform/i).should("exist");
           cy.getAttached(".hosts-summary").should("exist");
           cy.getAttached(".operating-systems").should("exist");
@@ -48,7 +47,7 @@ const dashboardPage = {
         });
         break;
       case "Linux":
-        cy.getAttached(".homepage__wrapper").within(() => {
+        cy.getAttached(".dashboard-page__wrapper").within(() => {
           cy.findByText(/platform/i).should("exist");
           cy.getAttached(".hosts-summary").should("exist");
           // "get" because we expect it not to exist
@@ -64,11 +63,12 @@ const dashboardPage = {
         });
         break;
       case "All":
-        cy.getAttached(".homepage__wrapper").within(() => {
+        cy.getAttached(".dashboard-page__wrapper").within(() => {
           cy.findByText(/platform/i).should("exist");
           cy.getAttached(".hosts-summary").should("exist");
-          cy.getAttached(".home-software").should("exist");
           cy.getAttached(".activity-feed").should("exist");
+          // hidden if no software
+          cy.get(".home-software").should("not.exist");
           if (tier === "premium") {
             cy.getAttached(".hosts-missing").should("exist");
             cy.getAttached(".hosts-low-space").should("exist");
@@ -80,10 +80,11 @@ const dashboardPage = {
         break;
       default:
         // no activity feed on team dashboard
-        cy.getAttached(".homepage__wrapper").within(() => {
+        cy.getAttached(".dashboard-page__wrapper").within(() => {
           cy.findByText(/platform/i).should("exist");
           cy.getAttached(".hosts-summary").should("exist");
-          cy.getAttached(".home-software").should("exist");
+          // hidden if no software
+          cy.get(".home-software").should("not.exist");
           cy.get(".activity-feed").should("not.exist");
           if (tier === "premium") {
             cy.getAttached(".hosts-missing").should("exist");

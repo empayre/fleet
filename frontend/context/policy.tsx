@@ -1,4 +1,10 @@
-import React, { createContext, useReducer, ReactNode } from "react";
+import React, {
+  createContext,
+  useReducer,
+  ReactNode,
+  useMemo,
+  useCallback,
+} from "react";
 import { find } from "lodash";
 
 import { osqueryTables } from "utilities/osquery_tables";
@@ -18,7 +24,9 @@ interface ISetLastEditedQueryInfo {
   lastEditedQueryDescription?: string;
   lastEditedQueryBody?: string;
   lastEditedQueryResolution?: string;
+  lastEditedQueryCritical?: boolean;
   lastEditedQueryPlatform?: IPlatformString | null;
+  defaultPolicy?: boolean;
 }
 
 interface ISetPolicyTeamID {
@@ -46,13 +54,17 @@ type InitialStateType = {
   lastEditedQueryDescription: string;
   lastEditedQueryBody: string;
   lastEditedQueryResolution: string;
+  lastEditedQueryCritical: boolean;
   lastEditedQueryPlatform: IPlatformString | null;
+  defaultPolicy: boolean;
   setLastEditedQueryId: (value: number) => void;
   setLastEditedQueryName: (value: string) => void;
   setLastEditedQueryDescription: (value: string) => void;
   setLastEditedQueryBody: (value: string) => void;
   setLastEditedQueryResolution: (value: string) => void;
+  setLastEditedQueryCritical: (value: boolean) => void;
   setLastEditedQueryPlatform: (value: IPlatformString | null) => void;
+  setDefaultPolicy: (value: boolean) => void;
   policyTeamId: number;
   setPolicyTeamId: (id: number) => void;
   selectedOsqueryTable: IOsQueryTable;
@@ -69,13 +81,17 @@ const initialState = {
   lastEditedQueryDescription: "",
   lastEditedQueryBody: "",
   lastEditedQueryResolution: "",
+  lastEditedQueryCritical: false,
   lastEditedQueryPlatform: null,
+  defaultPolicy: false,
   setLastEditedQueryId: () => null,
   setLastEditedQueryName: () => null,
   setLastEditedQueryDescription: () => null,
   setLastEditedQueryBody: () => null,
   setLastEditedQueryResolution: () => null,
+  setLastEditedQueryCritical: () => null,
   setLastEditedQueryPlatform: () => null,
+  setDefaultPolicy: () => null,
   policyTeamId: 0,
   setPolicyTeamId: () => null,
   selectedOsqueryTable: initTable,
@@ -119,10 +135,18 @@ const reducer = (state: InitialStateType, action: IAction) => {
           typeof action.lastEditedQueryResolution === "undefined"
             ? state.lastEditedQueryResolution
             : action.lastEditedQueryResolution,
+        lastEditedQueryCritical:
+          typeof action.lastEditedQueryCritical === "undefined"
+            ? state.lastEditedQueryCritical
+            : action.lastEditedQueryCritical,
         lastEditedQueryPlatform:
           typeof action.lastEditedQueryPlatform === "undefined"
             ? state.lastEditedQueryPlatform
             : action.lastEditedQueryPlatform,
+        defaultPolicy:
+          typeof action.defaultPolicy === "undefined"
+            ? state.defaultPolicy
+            : action.defaultPolicy,
       };
     default:
       return state;
@@ -134,60 +158,123 @@ export const PolicyContext = createContext<InitialStateType>(initialState);
 const PolicyProvider = ({ children }: Props): JSX.Element => {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const value = {
-    lastEditedQueryId: state.lastEditedQueryId,
-    lastEditedQueryName: state.lastEditedQueryName,
-    lastEditedQueryDescription: state.lastEditedQueryDescription,
-    lastEditedQueryBody: state.lastEditedQueryBody,
-    lastEditedQueryResolution: state.lastEditedQueryResolution,
-    lastEditedQueryPlatform: state.lastEditedQueryPlatform,
-    setLastEditedQueryId: (lastEditedQueryId: number) => {
-      dispatch({
-        type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
-        lastEditedQueryId,
-      });
-    },
-    setLastEditedQueryName: (lastEditedQueryName: string) => {
-      dispatch({
-        type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
-        lastEditedQueryName,
-      });
-    },
-    setLastEditedQueryDescription: (lastEditedQueryDescription: string) => {
+  const setPolicyTeamId = useCallback((id: number) => {
+    dispatch({ type: ACTIONS.SET_POLICY_TEAM_ID, id });
+  }, []);
+
+  const setLastEditedQueryId = useCallback((lastEditedQueryId: number) => {
+    dispatch({
+      type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
+      lastEditedQueryId,
+    });
+  }, []);
+
+  const setLastEditedQueryName = useCallback((lastEditedQueryName: string) => {
+    dispatch({
+      type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
+      lastEditedQueryName,
+    });
+  }, []);
+
+  const setLastEditedQueryDescription = useCallback(
+    (lastEditedQueryDescription: string) => {
       dispatch({
         type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
         lastEditedQueryDescription,
       });
     },
-    setLastEditedQueryBody: (lastEditedQueryBody: string) => {
-      dispatch({
-        type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
-        lastEditedQueryBody,
-      });
-    },
-    setLastEditedQueryResolution: (lastEditedQueryResolution: string) => {
+    []
+  );
+  const setLastEditedQueryBody = useCallback((lastEditedQueryBody: string) => {
+    dispatch({
+      type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
+      lastEditedQueryBody,
+    });
+  }, []);
+  const setLastEditedQueryResolution = useCallback(
+    (lastEditedQueryResolution: string) => {
       dispatch({
         type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
         lastEditedQueryResolution,
       });
     },
-    setLastEditedQueryPlatform: (
-      lastEditedQueryPlatform: IPlatformString | null | undefined
-    ) => {
+    []
+  );
+  const setLastEditedQueryCritical = useCallback(
+    (lastEditedQueryCritical: boolean) => {
+      dispatch({
+        type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
+        lastEditedQueryCritical,
+      });
+    },
+    []
+  );
+  const setLastEditedQueryPlatform = useCallback(
+    (lastEditedQueryPlatform: IPlatformString | null | undefined) => {
       dispatch({
         type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
         lastEditedQueryPlatform,
       });
     },
-    policyTeamId: state.policyTeamId,
-    setPolicyTeamId: (id: number) => {
-      dispatch({ type: ACTIONS.SET_POLICY_TEAM_ID, id });
-    },
-    selectedOsqueryTable: state.selectedOsqueryTable,
-    setSelectedOsqueryTable: (tableName: string) => {
-      dispatch({ type: ACTIONS.SET_SELECTED_OSQUERY_TABLE, tableName });
-    },
-  };
+    []
+  );
+  const setDefaultPolicy = useCallback((defaultPolicy: boolean) => {
+    dispatch({
+      type: ACTIONS.SET_LAST_EDITED_QUERY_INFO,
+      defaultPolicy,
+    });
+  }, []);
+
+  const setSelectedOsqueryTable = useCallback((tableName: string) => {
+    dispatch({ type: ACTIONS.SET_SELECTED_OSQUERY_TABLE, tableName });
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      lastEditedQueryId: state.lastEditedQueryId,
+      lastEditedQueryName: state.lastEditedQueryName,
+      lastEditedQueryDescription: state.lastEditedQueryDescription,
+      lastEditedQueryBody: state.lastEditedQueryBody,
+      lastEditedQueryResolution: state.lastEditedQueryResolution,
+      lastEditedQueryCritical: state.lastEditedQueryCritical,
+      lastEditedQueryPlatform: state.lastEditedQueryPlatform,
+      defaultPolicy: state.defaultPolicy,
+      setLastEditedQueryId,
+      setLastEditedQueryName,
+      setLastEditedQueryDescription,
+      setLastEditedQueryBody,
+      setLastEditedQueryResolution,
+      setLastEditedQueryCritical,
+      setLastEditedQueryPlatform,
+      setDefaultPolicy,
+      policyTeamId: state.policyTeamId,
+      setPolicyTeamId,
+      selectedOsqueryTable: state.selectedOsqueryTable,
+      setSelectedOsqueryTable,
+    }),
+    [
+      setDefaultPolicy,
+      setLastEditedQueryBody,
+      setLastEditedQueryCritical,
+      setLastEditedQueryDescription,
+      setLastEditedQueryId,
+      setLastEditedQueryName,
+      setLastEditedQueryPlatform,
+      setLastEditedQueryResolution,
+      setPolicyTeamId,
+      setSelectedOsqueryTable,
+      state.defaultPolicy,
+      state.lastEditedQueryBody,
+      state.lastEditedQueryCritical,
+      state.lastEditedQueryDescription,
+      state.lastEditedQueryId,
+      state.lastEditedQueryName,
+      state.lastEditedQueryPlatform,
+      state.lastEditedQueryResolution,
+      state.policyTeamId,
+      state.selectedOsqueryTable,
+    ]
+  );
 
   return (
     <PolicyContext.Provider value={value}>{children}</PolicyContext.Provider>

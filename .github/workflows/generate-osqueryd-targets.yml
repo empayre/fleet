@@ -1,4 +1,4 @@
-name: Generate osqueryd targets for Orbit
+name: Generate osqueryd targets for Fleetd
 
 on:
   push:
@@ -13,13 +13,18 @@ on:
       - '.github/workflows/generate-osqueryd-targets.yml'
   workflow_dispatch:
 
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
 defaults:
   run:
     # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
     shell: bash
 
 env:
-  OSQUERY_VERSION: 5.5.1
+  OSQUERY_VERSION: 5.8.2
 
 permissions:
   contents: read
@@ -36,7 +41,7 @@ jobs:
           make osqueryd-app-tar-gz out-path=. version=$OSQUERY_VERSION
 
       - name: Upload osqueryd.app.tar.gz
-        uses: actions/upload-artifact@3cea5372237819ed00197afe530f5a7ea3e805c8 # v2
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v2
         with:
           name: osqueryd.app.tar.gz
           path: osqueryd.app.tar.gz
@@ -56,7 +61,7 @@ jobs:
           ./opt/osquery/bin/osqueryd --version
 
       - name: Upload osqueryd for linux
-        uses: actions/upload-artifact@3cea5372237819ed00197afe530f5a7ea3e805c8 # v2
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v2
         with:
           name: osqueryd
           path: opt/osquery/bin/osqueryd
@@ -78,7 +83,7 @@ jobs:
           C:\temp\osquery\osqueryd\osqueryd.exe --version
 
       - name: Upload osqueryd for Windows
-        uses: actions/upload-artifact@3cea5372237819ed00197afe530f5a7ea3e805c8 # v2
+        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v2
         with:
           name: osqueryd.exe
           path: C:\temp\osquery\osqueryd\osqueryd.exe

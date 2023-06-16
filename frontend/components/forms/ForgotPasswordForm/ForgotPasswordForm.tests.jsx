@@ -1,11 +1,11 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 
-import { renderWithSetup } from "test/testingUtils";
+import { renderWithSetup } from "test/test-utils";
 
 import ForgotPasswordForm from "./ForgotPasswordForm";
 
-const email = "hi@thegnar.co";
+const [validEmail, invalidEmail] = ["hi@thegnar.co", "invalid-email"];
 
 describe("ForgotPasswordForm - component", () => {
   const handleSubmit = jest.fn();
@@ -14,7 +14,7 @@ describe("ForgotPasswordForm - component", () => {
 
     expect(screen.getByRole("textbox", { name: /email/i })).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Send email" })
+      screen.getByRole("button", { name: "Get instructions" })
     ).toBeInTheDocument();
   });
 
@@ -33,20 +33,20 @@ describe("ForgotPasswordForm - component", () => {
     ).toBeInTheDocument();
   });
 
-  it("should test validation for email field", async () => {
+  it("correctly validates the email field", async () => {
     const { user } = renderWithSetup(
       <ForgotPasswordForm handleSubmit={handleSubmit} />
     );
 
-    await user.click(screen.getByRole("button", { name: "Send email" }));
+    await user.click(screen.getByRole("button", { name: "Get instructions" }));
     let emailError = screen.getByText("Email field must be completed");
     expect(emailError).toBeInTheDocument();
     expect(handleSubmit).not.toHaveBeenCalled();
 
-    await user.type(screen.getByPlaceholderText("Email"), "invalid-email");
-    await user.click(screen.getByRole("button", { name: "Send email" }));
+    await user.type(screen.getByPlaceholderText("Email"), invalidEmail);
+    await user.click(screen.getByRole("button", { name: "Get instructions" }));
 
-    emailError = screen.getByText("invalid-email is not a valid email");
+    emailError = screen.getByText("Email must be a valid email address");
     expect(emailError).toBeInTheDocument();
     expect(handleSubmit).not.toHaveBeenCalled();
   });
@@ -56,9 +56,9 @@ describe("ForgotPasswordForm - component", () => {
       <ForgotPasswordForm handleSubmit={handleSubmit} />
     );
 
-    await user.type(screen.getByPlaceholderText("Email"), email);
-    await user.click(screen.getByRole("button", { name: "Send email" }));
+    await user.type(screen.getByPlaceholderText("Email"), validEmail);
 
-    expect(handleSubmit).toHaveBeenCalledWith({ email });
+    await user.click(screen.getByRole("button", { name: "Get instructions" }));
+    expect(handleSubmit).toHaveBeenCalledWith({ email: validEmail });
   });
 });

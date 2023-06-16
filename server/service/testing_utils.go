@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,52 +16,56 @@ import (
 	"github.com/WatchBeam/clock"
 	eeservice "github.com/fleetdm/fleet/v4/ee/server/service"
 	"github.com/fleetdm/fleet/v4/server/config"
+	"github.com/fleetdm/fleet/v4/server/contexts/license"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/logging"
+	"github.com/fleetdm/fleet/v4/server/mail"
+	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
+	nanodep_mock "github.com/fleetdm/fleet/v4/server/mock/nanodep"
 	"github.com/fleetdm/fleet/v4/server/ptr"
 	"github.com/fleetdm/fleet/v4/server/service/async"
+	"github.com/fleetdm/fleet/v4/server/service/mock"
 	"github.com/fleetdm/fleet/v4/server/sso"
 	"github.com/fleetdm/fleet/v4/server/test"
 	kitlog "github.com/go-kit/kit/log"
+	"github.com/google/uuid"
 	nanodep_storage "github.com/micromdm/nanodep/storage"
+	"github.com/micromdm/nanomdm/mdm"
+	"github.com/micromdm/nanomdm/push"
 	nanomdm_push "github.com/micromdm/nanomdm/push"
 	nanomdm_storage "github.com/micromdm/nanomdm/storage"
+	scep_depot "github.com/micromdm/scep/v2/depot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/throttled/throttled/v2"
 	"github.com/throttled/throttled/v2/store/memstore"
 )
 
-func newTestService(t *testing.T, ds fleet.Datastore, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, opts ...*TestServerOpts) fleet.Service {
+func newTestService(t *testing.T, ds fleet.Datastore, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, opts ...*TestServerOpts) (fleet.Service, context.Context) {
 	return newTestServiceWithConfig(t, ds, config.TestConfig(), rs, lq, opts...)
 }
 
-func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig config.FleetConfig, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, opts ...*TestServerOpts) fleet.Service {
-	mailer := &mockMailService{SendEmailFn: func(e fleet.Email) error { return nil }}
-	license := &fleet.LicenseInfo{Tier: fleet.TierFree}
-	writer, err := logging.NewFilesystemLogWriter(
-		fleetConfig.Filesystem.StatusLogFile,
-		kitlog.NewNopLogger(),
-		fleetConfig.Filesystem.EnableLogRotation,
-		fleetConfig.Filesystem.EnableLogCompression,
-	)
-
+func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig config.FleetConfig, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, opts ...*TestServerOpts) (fleet.Service, context.Context) {
+	lic := &fleet.LicenseInfo{Tier: fleet.TierFree}
+	writer, err := logging.NewFilesystemLogWriter(fleetConfig.Filesystem.StatusLogFile, kitlog.NewNopLogger(), fleetConfig.Filesystem.EnableLogRotation, fleetConfig.Filesystem.EnableLogCompression, 500, 28, 3)
 	require.NoError(t, err)
 
-	osqlogger := &logging.OsqueryLogger{Status: writer, Result: writer}
+	osqlogger := &OsqueryLogger{Status: writer, Result: writer}
 	logger := kitlog.NewNopLogger()
 
-	var ssoStore sso.SessionStore
-
 	var (
-		failingPolicySet  fleet.FailingPolicySet  = NewMemFailingPolicySet()
-		enrollHostLimiter fleet.EnrollHostLimiter = nopEnrollHostLimiter{}
-		is                fleet.InstallerStore
-		mdmStorage        nanomdm_storage.AllStorage
-		depStorage        nanodep_storage.AllStorage
-		mdmPusher         nanomdm_push.Pusher
+		failingPolicySet  fleet.FailingPolicySet     = NewMemFailingPolicySet()
+		enrollHostLimiter fleet.EnrollHostLimiter    = nopEnrollHostLimiter{}
+		depStorage        nanodep_storage.AllStorage = &nanodep_mock.Storage{}
+		mailer            fleet.MailService          = &mockMailService{SendEmailFn: func(e fleet.Email) error { return nil }}
+		c                 clock.Clock                = clock.C
+
+		is          fleet.InstallerStore
+		mdmStorage  nanomdm_storage.AllStorage
+		mdmPusher   nanomdm_push.Pusher
+		ssoStore    sso.SessionStore
+		profMatcher fleet.ProfileMatcher
 	)
-	var c clock.Clock = clock.C
 	if len(opts) > 0 {
 		if opts[0].Clock != nil {
 			c = opts[0].Clock
@@ -81,10 +86,14 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 			logger = opts[0].Logger
 		}
 		if opts[0].License != nil {
-			license = opts[0].License
+			lic = opts[0].License
 		}
 		if opts[0].Pool != nil {
 			ssoStore = sso.NewSessionStore(opts[0].Pool)
+			profMatcher = apple_mdm.NewProfileMatcher(opts[0].Pool)
+		}
+		if opts[0].ProfileMatcher != nil {
+			profMatcher = opts[0].ProfileMatcher
 		}
 		if opts[0].FailingPolicySet != nil {
 			failingPolicySet = opts[0].FailingPolicySet
@@ -92,19 +101,40 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 		if opts[0].EnrollHostLimiter != nil {
 			enrollHostLimiter = opts[0].EnrollHostLimiter
 		}
+		if opts[0].UseMailService {
+			mailer, err = mail.NewService(config.TestConfig())
+			require.NoError(t, err)
+		}
 
 		// allow to explicitly set installer store to nil
 		is = opts[0].Is
 		// allow to explicitly set MDM storage to nil
 		mdmStorage = opts[0].MDMStorage
-		// allow to explicitly set DEP storage to nil
-		depStorage = opts[0].DEPStorage
+		if opts[0].DEPStorage != nil {
+			depStorage = opts[0].DEPStorage
+		}
 		// allow to explicitly set mdm pusher to nil
 		mdmPusher = opts[0].MDMPusher
 	}
 
+	ctx := license.NewContext(context.Background(), lic)
+
+	cronSchedulesService := fleet.NewCronSchedules()
+
+	if len(opts) > 0 && opts[0].StartCronSchedules != nil {
+		for _, fn := range opts[0].StartCronSchedules {
+			err = cronSchedulesService.StartCronSchedule(fn(ctx, ds))
+			require.NoError(t, err)
+		}
+	}
+
+	mdmPushCertTopic := ""
+	if len(opts) > 0 && opts[0].APNSTopic != "" {
+		mdmPushCertTopic = opts[0].APNSTopic
+	}
+
 	svc, err := NewService(
-		context.Background(),
+		ctx,
 		ds,
 		task,
 		rs,
@@ -117,33 +147,44 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 		lq,
 		ds,
 		is,
-		*license,
 		failingPolicySet,
 		&fleet.NoOpGeoIP{},
 		enrollHostLimiter,
 		depStorage,
 		mdmStorage,
 		mdmPusher,
-		"",
+		mdmPushCertTopic,
+		cronSchedulesService,
 	)
 	if err != nil {
 		panic(err)
 	}
-	if license.IsPremium() {
-		svc, err = eeservice.NewService(svc, ds, kitlog.NewNopLogger(), fleetConfig, mailer, c, license)
+	if lic.IsPremium() {
+		svc, err = eeservice.NewService(
+			svc,
+			ds,
+			kitlog.NewNopLogger(),
+			fleetConfig,
+			mailer,
+			c,
+			depStorage,
+			apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPusher),
+			"",
+			ssoStore,
+			profMatcher,
+		)
 		if err != nil {
 			panic(err)
 		}
 	}
-	return svc
+	return svc, ctx
 }
 
-func newTestServiceWithClock(t *testing.T, ds fleet.Datastore, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, c clock.Clock) fleet.Service {
+func newTestServiceWithClock(t *testing.T, ds fleet.Datastore, rs fleet.QueryResultStore, lq fleet.LiveQueryStore, c clock.Clock) (fleet.Service, context.Context) {
 	testConfig := config.TestConfig()
-	svc := newTestServiceWithConfig(t, ds, testConfig, rs, lq, &TestServerOpts{
+	return newTestServiceWithConfig(t, ds, testConfig, rs, lq, &TestServerOpts{
 		Clock: c,
 	})
-	return svc
 }
 
 func createTestUsers(t *testing.T, ds fleet.Datastore) map[string]fleet.User {
@@ -210,6 +251,8 @@ func (svc *mockMailService) SendEmail(e fleet.Email) error {
 	return svc.SendEmailFn(e)
 }
 
+type TestNewScheduleFunc func(ctx context.Context, ds fleet.Datastore) fleet.NewCronScheduleFunc
+
 type TestServerOpts struct {
 	Logger              kitlog.Logger
 	License             *fleet.LicenseInfo
@@ -225,8 +268,13 @@ type TestServerOpts struct {
 	FleetConfig         *config.FleetConfig
 	MDMStorage          nanomdm_storage.AllStorage
 	DEPStorage          nanodep_storage.AllStorage
+	SCEPStorage         scep_depot.Depot
 	MDMPusher           nanomdm_push.Pusher
 	HTTPServerConfig    *http.Server
+	StartCronSchedules  []TestNewScheduleFunc
+	UseMailService      bool
+	APNSTopic           string
+	ProfileMatcher      fleet.ProfileMatcher
 }
 
 func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServerOpts) (map[string]fleet.User, *httptest.Server) {
@@ -242,7 +290,7 @@ func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServ
 	if len(opts) > 0 && opts[0].FleetConfig != nil {
 		cfg = *opts[0].FleetConfig
 	}
-	svc := newTestServiceWithConfig(t, ds, cfg, rs, lq, opts...)
+	svc, ctx := newTestServiceWithConfig(t, ds, cfg, rs, lq, opts...)
 	users := map[string]fleet.User{}
 	if len(opts) == 0 || (len(opts) > 0 && !opts[0].SkipCreateTestUsers) {
 		users = createTestUsers(t, ds)
@@ -251,14 +299,42 @@ func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServ
 	if len(opts) > 0 && opts[0].Logger != nil {
 		logger = opts[0].Logger
 	}
+	var mdmPusher nanomdm_push.Pusher
+	if len(opts) > 0 && opts[0].MDMPusher != nil {
+		mdmPusher = opts[0].MDMPusher
+	}
 	limitStore, _ := memstore.New(0)
-	r := MakeHandler(svc, cfg, logger, limitStore, WithLoginRateLimit(throttled.PerMin(100)))
-	server := httptest.NewUnstartedServer(r)
-	server.Config = cfg.Server.DefaultHTTPServer(context.Background(), r)
+	rootMux := http.NewServeMux()
+
+	if len(opts) > 0 {
+		mdmStorage := opts[0].MDMStorage
+		scepStorage := opts[0].SCEPStorage
+		if mdmStorage != nil && scepStorage != nil {
+			err := RegisterAppleMDMProtocolServices(
+				rootMux,
+				cfg.MDM,
+				mdmStorage,
+				scepStorage,
+				logger,
+				&MDMAppleCheckinAndCommandService{
+					ds:        ds,
+					commander: apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPusher),
+					logger:    kitlog.NewNopLogger(),
+				},
+			)
+			require.NoError(t, err)
+		}
+	}
+
+	apiHandler := MakeHandler(svc, cfg, logger, limitStore, WithLoginRateLimit(throttled.PerMin(100)))
+	rootMux.Handle("/api/", apiHandler)
+
+	server := httptest.NewUnstartedServer(rootMux)
+	server.Config = cfg.Server.DefaultHTTPServer(ctx, rootMux)
 	if len(opts) > 0 && opts[0].HTTPServerConfig != nil {
 		server.Config = opts[0].HTTPServerConfig
 		// make sure we use the application handler we just created
-		server.Config.Handler = r
+		server.Config.Handler = rootMux
 	}
 	server.Start()
 	t.Cleanup(func() {
@@ -267,10 +343,24 @@ func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServ
 	return users, server
 }
 
+func testSESPluginConfig() config.FleetConfig {
+	c := config.TestConfig()
+	c.Email = config.EmailConfig{EmailBackend: "ses"}
+	c.SES = config.SESConfig{
+		Region:           "us-east-1",
+		AccessKeyID:      "foo",
+		SecretAccessKey:  "bar",
+		StsAssumeRoleArn: "baz",
+		SourceArn:        "qux",
+	}
+	return c
+}
+
 func testKinesisPluginConfig() config.FleetConfig {
 	c := config.TestConfig()
 	c.Osquery.ResultLogPlugin = "kinesis"
 	c.Osquery.StatusLogPlugin = "kinesis"
+	c.Activity.AuditLogPlugin = "kinesis"
 	c.Kinesis = config.KinesisConfig{
 		Region:           "us-east-1",
 		AccessKeyID:      "foo",
@@ -278,6 +368,7 @@ func testKinesisPluginConfig() config.FleetConfig {
 		StsAssumeRoleArn: "baz",
 		StatusStream:     "test-status-stream",
 		ResultStream:     "test-result-stream",
+		AuditStream:      "test-audit-stream",
 	}
 	return c
 }
@@ -286,6 +377,7 @@ func testFirehosePluginConfig() config.FleetConfig {
 	c := config.TestConfig()
 	c.Osquery.ResultLogPlugin = "firehose"
 	c.Osquery.StatusLogPlugin = "firehose"
+	c.Activity.AuditLogPlugin = "firehose"
 	c.Firehose = config.FirehoseConfig{
 		Region:           "us-east-1",
 		AccessKeyID:      "foo",
@@ -293,6 +385,7 @@ func testFirehosePluginConfig() config.FleetConfig {
 		StsAssumeRoleArn: "baz",
 		StatusStream:     "test-status-firehose",
 		ResultStream:     "test-result-firehose",
+		AuditStream:      "test-audit-firehose",
 	}
 	return c
 }
@@ -301,6 +394,7 @@ func testLambdaPluginConfig() config.FleetConfig {
 	c := config.TestConfig()
 	c.Osquery.ResultLogPlugin = "lambda"
 	c.Osquery.StatusLogPlugin = "lambda"
+	c.Activity.AuditLogPlugin = "lambda"
 	c.Lambda = config.LambdaConfig{
 		Region:           "us-east-1",
 		AccessKeyID:      "foo",
@@ -308,6 +402,7 @@ func testLambdaPluginConfig() config.FleetConfig {
 		StsAssumeRoleArn: "baz",
 		ResultFunction:   "result-func",
 		StatusFunction:   "status-func",
+		AuditFunction:    "audit-func",
 	}
 	return c
 }
@@ -316,10 +411,12 @@ func testPubSubPluginConfig() config.FleetConfig {
 	c := config.TestConfig()
 	c.Osquery.ResultLogPlugin = "pubsub"
 	c.Osquery.StatusLogPlugin = "pubsub"
+	c.Activity.AuditLogPlugin = "pubsub"
 	c.PubSub = config.PubSubConfig{
 		Project:       "test",
 		StatusTopic:   "status-topic",
 		ResultTopic:   "result-topic",
+		AuditTopic:    "audit-topic",
 		AddAttributes: false,
 	}
 	return c
@@ -329,12 +426,17 @@ func testStdoutPluginConfig() config.FleetConfig {
 	c := config.TestConfig()
 	c.Osquery.ResultLogPlugin = "stdout"
 	c.Osquery.StatusLogPlugin = "stdout"
+	c.Activity.AuditLogPlugin = "stdout"
 	return c
 }
 
 func testUnrecognizedPluginConfig() config.FleetConfig {
 	c := config.TestConfig()
-	c.Osquery = config.OsqueryConfig{ResultLogPlugin: "bar", StatusLogPlugin: "bar"}
+	c.Osquery = config.OsqueryConfig{
+		ResultLogPlugin: "bar",
+		StatusLogPlugin: "bar",
+	}
+	c.Activity.AuditLogPlugin = "bar"
 	return c
 }
 
@@ -442,4 +544,72 @@ func (nopEnrollHostLimiter) CanEnrollNewHost(ctx context.Context) (bool, error) 
 
 func (nopEnrollHostLimiter) SyncEnrolledHostIDs(ctx context.Context) error {
 	return nil
+}
+
+func newMockAPNSPushProviderFactory() (*mock.APNSPushProviderFactory, *mock.APNSPushProvider) {
+	provider := &mock.APNSPushProvider{}
+	provider.PushFunc = mockSuccessfulPush
+	factory := &mock.APNSPushProviderFactory{}
+	factory.NewPushProviderFunc = func(*tls.Certificate) (push.PushProvider, error) {
+		return provider, nil
+	}
+
+	return factory, provider
+}
+
+func mockSuccessfulPush(pushes []*mdm.Push) (map[string]*push.Response, error) {
+	res := make(map[string]*push.Response, len(pushes))
+	for _, p := range pushes {
+		res[p.Token.String()] = &push.Response{
+			Id:  uuid.New().String(),
+			Err: nil,
+		}
+	}
+	return res, nil
+}
+
+func mdmAppleConfigurationRequiredEndpoints() []struct {
+	method, path        string
+	deviceAuthenticated bool
+	premiumOnly         bool
+} {
+	return []struct {
+		method, path        string
+		deviceAuthenticated bool
+		premiumOnly         bool
+	}{
+		{"POST", "/api/latest/fleet/mdm/apple/enqueue", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/commandresults", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/installers/1", false, false},
+		{"DELETE", "/api/latest/fleet/mdm/apple/installers/1", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/installers", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/devices", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/dep/devices", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/profiles", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/profiles/1", false, false},
+		{"DELETE", "/api/latest/fleet/mdm/apple/profiles/1", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/profiles/summary", false, false},
+		{"PATCH", "/api/latest/fleet/mdm/hosts/1/unenroll", false, false},
+		{"GET", "/api/latest/fleet/mdm/hosts/1/encryption_key", false, false},
+		{"POST", "/api/latest/fleet/mdm/hosts/1/lock", false, false},
+		{"POST", "/api/latest/fleet/mdm/hosts/1/wipe", false, false},
+		{"PATCH", "/api/latest/fleet/mdm/apple/settings", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple", false, false},
+		{"GET", apple_mdm.EnrollPath + "?token=test", false, false},
+		{"GET", apple_mdm.InstallerPath + "?token=test", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/setup/eula/token", false, false},
+		{"DELETE", "/api/latest/fleet/mdm/apple/setup/eula/token", false, false},
+		{"GET", "/api/latest/fleet/mdm/apple/setup/eula/metadata", false, false},
+		// TODO: this endpoint accepts multipart/form data that gets
+		// parsed before the MDM check, we need to refactor this
+		// function to return more information to the caller, or find a
+		// better way to test these endpoints.
+		// {"POST", "/api/latest/fleet/mdm/apple/setup/eula"},
+		{"GET", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"POST", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"DELETE", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"POST", "/api/latest/fleet/device/%s/migrate_mdm", true, true},
+		{"POST", "/api/latest/fleet/mdm/apple/profiles/preassign", false, true},
+		{"POST", "/api/latest/fleet/mdm/apple/profiles/match", false, true},
+	}
 }

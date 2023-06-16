@@ -43,8 +43,7 @@ rICQDchR6/cxoQCkoyf+/YTpY492MafV</ds:X509Certificate>
 `
 
 func TestParseMetadata(t *testing.T) {
-
-	settings, err := ParseMetadata(metadata)
+	settings, err := parseMetadata(metadata)
 	require.Nil(t, err)
 
 	assert.Equal(t, "http://www.okta.com/exka4zkf6dxm8pF220h7", settings.EntityID)
@@ -59,9 +58,10 @@ func TestParseMetadata(t *testing.T) {
 
 func TestGetMetadata(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(metadata))
+		_, err := w.Write([]byte(metadata))
+		require.NoError(t, err)
 	}))
-	settings, err := GetMetadata(ts.URL)
+	settings, err := getMetadata(ts.URL)
 	require.Nil(t, err)
 	assert.Equal(t, "http://www.okta.com/exka4zkf6dxm8pF220h7", settings.EntityID)
 	assert.Len(t, settings.IDPSSODescriptor.NameIDFormats, 2)

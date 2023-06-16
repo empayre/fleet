@@ -9,6 +9,7 @@ import (
 
 	"github.com/fleetdm/fleet/v4/server/datastore/mysql"
 	"github.com/fleetdm/fleet/v4/server/fleet"
+	"github.com/fleetdm/fleet/v4/server/ptr"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/require"
@@ -25,11 +26,11 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 	require.NoError(t, err)
 
 	// create some mappings and MDM/Munki data
-	s.ds.ReplaceHostDeviceMapping(context.Background(), hosts[0].ID, []*fleet.HostDeviceMapping{
+	require.NoError(t, s.ds.ReplaceHostDeviceMapping(context.Background(), hosts[0].ID, []*fleet.HostDeviceMapping{
 		{HostID: hosts[0].ID, Email: "a@b.c", Source: "google_chrome_profiles"},
 		{HostID: hosts[0].ID, Email: "b@b.c", Source: "google_chrome_profiles"},
-	})
-	require.NoError(t, s.ds.SetOrUpdateMDMData(context.Background(), hosts[0].ID, true, "url", false))
+	}))
+	require.NoError(t, s.ds.SetOrUpdateMDMData(context.Background(), hosts[0].ID, false, true, "url", false, ""))
 	require.NoError(t, s.ds.SetOrUpdateMunkiInfo(context.Background(), hosts[0].ID, "1.3.0", nil, nil))
 	// create a battery for hosts[0]
 	require.NoError(t, s.ds.ReplaceHostBatteries(context.Background(), hosts[0].ID, []*fleet.HostBattery{
@@ -51,23 +52,38 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/no_such_token", nil, http.StatusUnauthorized)
 	res.Body.Close()
 
+	// set the  mdm configured flag
+	ctx := context.Background()
+	appCfg, err := s.ds.AppConfig(ctx)
+	require.NoError(t, err)
+	appCfg.MDM.EnabledAndConfigured = true
+	err = s.ds.SaveAppConfig(ctx, appCfg)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		appCfg.MDM.EnabledAndConfigured = false
+		err = s.ds.SaveAppConfig(ctx, appCfg)
+	})
+
 	// get host with valid token
 	var getHostResp getDeviceHostResponse
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token, nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&getHostResp)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getHostResp))
+	require.NoError(t, res.Body.Close())
 	require.Equal(t, hosts[0].ID, getHostResp.Host.ID)
 	require.False(t, getHostResp.Host.RefetchRequested)
 	require.Equal(t, "http://example.com/logo", getHostResp.OrgLogoURL)
 	require.Nil(t, getHostResp.Host.Policies)
 	require.NotNil(t, getHostResp.Host.Batteries)
 	require.Equal(t, &fleet.HostBattery{CycleCount: 1, Health: "Normal"}, (*getHostResp.Host.Batteries)[0])
+	require.True(t, getHostResp.GlobalConfig.MDM.EnabledAndConfigured)
 	hostDevResp := getHostResp.Host
 
-	// make request for same host on the host details API endpoint, responses should match, except for policies
+	// make request for same host on the host details API endpoint,
+	// responses should match, except for policies and DEP assignment
 	getHostResp = getDeviceHostResponse{}
 	s.DoJSON("GET", fmt.Sprintf("/api/latest/fleet/hosts/%d", hosts[0].ID), nil, http.StatusOK, &getHostResp)
 	getHostResp.Host.Policies = nil
+	getHostResp.Host.DEPAssignedToFleet = ptr.Bool(false)
 	require.Equal(t, hostDevResp, getHostResp.Host)
 
 	// request a refetch for that valid host
@@ -77,19 +93,19 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 	// host should have that flag turned to true
 	getHostResp = getDeviceHostResponse{}
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token, nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&getHostResp)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getHostResp))
+	require.NoError(t, res.Body.Close())
 	require.True(t, getHostResp.Host.RefetchRequested)
 
 	// request a refetch for an invalid token
 	res = s.DoRawNoAuth("POST", "/api/latest/fleet/device/no_such_token/refetch", nil, http.StatusUnauthorized)
-	res.Body.Close()
+	require.NoError(t, res.Body.Close())
 
 	// list device mappings for valid token
 	var listDMResp listHostDeviceMappingResponse
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/device_mapping", nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&listDMResp)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&listDMResp))
+	require.NoError(t, res.Body.Close())
 	require.Equal(t, hosts[0].ID, listDMResp.HostID)
 	require.Len(t, listDMResp.DeviceMapping, 2)
 	devDMs := listDMResp.DeviceMapping
@@ -102,13 +118,13 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 
 	// list device mappings for invalid token
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/no_such_token/device_mapping", nil, http.StatusUnauthorized)
-	res.Body.Close()
+	require.NoError(t, res.Body.Close())
 
 	// get macadmins for valid token
 	var getMacadm macadminsDataResponse
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/macadmins", nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&getMacadm)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getMacadm))
+	require.NoError(t, res.Body.Close())
 	require.Equal(t, "1.3.0", getMacadm.Macadmins.Munki.Version)
 	devMacadm := getMacadm.Macadmins
 
@@ -119,22 +135,29 @@ func (s *integrationTestSuite) TestDeviceAuthenticatedEndpoints() {
 
 	// get macadmins for invalid token
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/no_such_token/macadmins", nil, http.StatusUnauthorized)
-	res.Body.Close()
+	require.NoError(t, res.Body.Close())
 
 	// response includes license info
 	getHostResp = getDeviceHostResponse{}
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token, nil, http.StatusOK)
-	json.NewDecoder(res.Body).Decode(&getHostResp)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getHostResp))
+	require.NoError(t, res.Body.Close())
 	require.NotNil(t, getHostResp.License)
 	require.Equal(t, getHostResp.License.Tier, "free")
 
 	// device policies are not accessible for free endpoints
 	listPoliciesResp := listDevicePoliciesResponse{}
 	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/policies", nil, http.StatusPaymentRequired)
-	json.NewDecoder(res.Body).Decode(&getHostResp)
-	res.Body.Close()
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getHostResp))
+	require.NoError(t, res.Body.Close())
 	require.Nil(t, listPoliciesResp.Policies)
+
+	// /device/desktop is not accessible for free endpoints
+	getDesktopResp := fleetDesktopResponse{}
+	res = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/desktop", nil, http.StatusPaymentRequired)
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&getDesktopResp))
+	require.NoError(t, res.Body.Close())
+	require.Nil(t, getDesktopResp.FailingPolicies)
 }
 
 // TestDefaultTransparencyURL tests that Fleet Free licensees are restricted to the default transparency url.
@@ -146,8 +169,8 @@ func (s *integrationTestSuite) TestDefaultTransparencyURL() {
 		LabelUpdatedAt:  time.Now(),
 		PolicyUpdatedAt: time.Now(),
 		SeenTime:        time.Now().Add(-1 * time.Minute),
-		OsqueryHostID:   t.Name(),
-		NodeKey:         t.Name(),
+		OsqueryHostID:   ptr.String(t.Name()),
+		NodeKey:         ptr.String(t.Name()),
 		UUID:            uuid.New().String(),
 		Hostname:        fmt.Sprintf("%sfoo.local", t.Name()),
 		Platform:        "darwin",
@@ -170,8 +193,8 @@ func (s *integrationTestSuite) TestDefaultTransparencyURL() {
 	// confirm device endpoint returns initial default url
 	deviceResp := &transparencyURLResponse{}
 	rawResp := s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/transparency", nil, http.StatusTemporaryRedirect)
-	json.NewDecoder(rawResp.Body).Decode(deviceResp)
-	rawResp.Body.Close()
+	json.NewDecoder(rawResp.Body).Decode(deviceResp) //nolint:errcheck
+	rawResp.Body.Close()                             //nolint:errcheck
 	require.NoError(t, deviceResp.Err)
 	require.Equal(t, fleet.DefaultTransparencyURL, rawResp.Header.Get("Location"))
 
@@ -184,8 +207,8 @@ func (s *integrationTestSuite) TestDefaultTransparencyURL() {
 	// device endpoint returns default url
 	deviceResp = &transparencyURLResponse{}
 	rawResp = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/transparency", nil, http.StatusTemporaryRedirect)
-	json.NewDecoder(rawResp.Body).Decode(deviceResp)
-	rawResp.Body.Close()
+	json.NewDecoder(rawResp.Body).Decode(deviceResp) //nolint:errcheck
+	rawResp.Body.Close()                             //nolint:errcheck
 	require.NoError(t, deviceResp.Err)
 	require.Equal(t, fleet.DefaultTransparencyURL, rawResp.Header.Get("Location"))
 
@@ -196,18 +219,46 @@ func (s *integrationTestSuite) TestDefaultTransparencyURL() {
 	// device endpoint still returns default url
 	deviceResp = &transparencyURLResponse{}
 	rawResp = s.DoRawNoAuth("GET", "/api/latest/fleet/device/"+token+"/transparency", nil, http.StatusTemporaryRedirect)
-	json.NewDecoder(rawResp.Body).Decode(deviceResp)
-	rawResp.Body.Close()
+	json.NewDecoder(rawResp.Body).Decode(deviceResp) //nolint:errcheck
+	rawResp.Body.Close()                             //nolint:errcheck
 	require.NoError(t, deviceResp.Err)
 	require.Equal(t, fleet.DefaultTransparencyURL, rawResp.Header.Get("Location"))
 }
 
-func (s *integrationTestSuite) TestDesktopRateLimit() {
+func (s *integrationTestSuite) TestRateLimitOfEndpoints() {
 	headers := map[string]string{
 		"X-Forwarded-For": "1.2.3.4",
 	}
-	for i := 0; i < desktopRateLimitMaxBurst+1; i++ { // rate limiting off-by-one
-		s.DoRawWithHeaders("GET", "/api/latest/fleet/device/"+uuid.NewString(), nil, http.StatusUnauthorized, headers).Body.Close()
+
+	testCases := []struct {
+		endpoint string
+		verb     string
+		payload  interface{}
+		burst    int
+		status   int
+	}{
+		{
+			endpoint: "/api/latest/fleet/forgot_password",
+			verb:     "POST",
+			payload:  forgotPasswordRequest{Email: "some@one.com"},
+			burst:    forgotPasswordRateLimitMaxBurst - 1,
+			status:   http.StatusAccepted,
+		},
+		{
+			endpoint: "/api/latest/fleet/device/" + uuid.NewString(),
+			verb:     "GET",
+			burst:    desktopRateLimitMaxBurst + 1,
+			status:   http.StatusUnauthorized,
+		},
 	}
-	s.DoRawWithHeaders("GET", "/api/latest/fleet/device/"+uuid.NewString(), nil, http.StatusTooManyRequests, headers).Body.Close()
+
+	for _, tCase := range testCases {
+		b, err := json.Marshal(tCase.payload)
+		require.NoError(s.T(), err)
+
+		for i := 0; i < tCase.burst; i++ {
+			s.DoRawWithHeaders(tCase.verb, tCase.endpoint, b, tCase.status, headers).Body.Close()
+		}
+		s.DoRawWithHeaders(tCase.verb, tCase.endpoint, b, http.StatusTooManyRequests, headers).Body.Close()
+	}
 }

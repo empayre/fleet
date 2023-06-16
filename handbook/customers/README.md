@@ -1,15 +1,86 @@
 # Customers
 
+
 ## Contacting Fleet
 
 If you're using a free version of Fleet, you can access free community support by opening an issue in the [Fleet GitHub repository](https://github.com/fleetdm/fleet/).
 
 Customers on a paid tier of Fleet can get in touch directly for commercial support:
 
+
+| Level of impact | Response time - premium tier | Response time - ultimate tier |
+| :--- | :--- | :--- |
+| Low to medium impact </br> Email/chat support during business hours </br> Email: Support email address </br> Chat: Dedicated Slack channel (confidential) </br>|  **1 business day** | **1 business day**  |
+| High to emergency impact </br> Expedited phone/chat/email support </br> Call or text: Fleet support phone number </br> Email: Emergency support email address </br> |  **4 business hours** | **≤1 hour during business hours** </br> **≤2 hours outside business hours** 
+
 | Level of impact | Type of support |
 | :--- | :--- |
-| Low to medium impact | Email/chat support during business hours </br> Email: support @ fleetdm.com </br> Chat: Dedicated Slack channel (confidential) </br> Response time: **≤1 business day** |
-| High to emergency impact | Expedited phone/chat/email support during business hours </br> Call or text: **(415) 651-2575** </br> Email: emergency @ fleetdm.com </br> Response time: **≤4 hours** |
+| Low to medium impact | Chat support during business hours Chat: Dedicated Slack channel (confidential) </br> Response time: **≤1 business day** |
+| High to emergency impact | Expedited phone/chat support during business hours </br> Call or text [the Fleet phone number](https://docs.google.com/document/d/1tE-NpNfw1icmU2MjYuBRib0VWBPVAdmq4NiCrpuI0F0/edit) that was provided in the invoice. </br> Response time: **≤4 hours** |
+
+
+## Becoming a customer
+
+To close a deal with a new customer (non-self-service), create a GitHub issue using the ["Sale" issue template](https://github.com/fleetdm/confidential/issues/new?assignees=hollidayn%2Czayhanlon&labels=project%2C%23cx%2C%23sales%2C%23business-operations&template=3-sale.md&title=New+customer%3A+_____________) and follow the steps.
+
+> TODO: dedupe between this section and the "Sale" issue template
+
+This workflow outlines the process that sales and customer success can follow when a new deal closes. 
+
+1. (AE) A customer is sent an order form
+    - If the customer requires the use of their own legal contract, the account executive (AE) sends that contract to the business operations (BizOps) team for review. Then: 
+    - If the customer can use DocuSign, the AE sends out the order form. The AE must cc themselves and BizOps on the order so that all parties receive a fully executed copy when signing is complete. 
+    - If the customer does not use DocuSign, the AE sends out the order form directly to the customer. 
+        - The AE then sends the paper signed copy to BizOps for Fleet review and execution (via DocuSign by the CEO).  
+        - BizOps will cc the AE and stay cc’d on the contract when the final copy is sent to the CEO for Fleet execution. 
+        - Note: The Chief Revenue Officer serves as the backup to BizOps
+2. The Customer and Fleet sign the order form.
+    - (AE) The AE adds the fully executed contract to the opportunity record.
+    - (AE) The AE marks the opportunity 'Closed Won' and includes the 'Closing Date'.
+    - (BizOps) BizOps team member adds fully executed contract to the [subscriptions folder](https://drive.google.com/drive/u/0/folders/1kwwg8RmnT8DyPLDDYLiJ7w5legDEPc57) (internal drive) in Fleet drive 
+3. (AE) The AE creates a 'New Sale Issue'
+    - They complete the AE tasks listed at the top of the issue.
+    - Then they assign the issue to BizOps and the Head of Customer Success (CS).
+    - AE completes the Business Objectives section of the Account Plan located in the Sales> Opportunities> {Account Name} shared google drive folder.
+    - Solution Architect completes the Technical Objectives section of the Account Plan located in the Sales> Opportunities> {Account Name} shared google drive folder.
+    - AE moves the {Account Name} folder within Opportunities to the Sales> Account Plans folder.
+    - The AE schedules a 30 minute internal handoff call with CS and any other related parties to the sale. 
+    - Prepare to review the following from the Account Plan:
+        - Details of the deal
+        - Primary contact / their role
+        - Desired use cases / desired outcomes
+        - Reasons for purchase
+        - Previously using Fleet Free?
+        - Support tier (Premium or Ultimate)
+        - Competitive solutions in place
+        - Other relevant technologies in place 
+        - Any proof of concept (POC) notes that are relevant
+        - Customer expectations for timeline
+        - Server deployment type
+4. (CS) The CSM kicks off the CS responsibilities in the 'New Sale Issue'
+    - Create an “Existing Business” renewal opportunity in Salesforce.com (SFDC).   
+    - Send the customer [welcome email](https://docs.google.com/document/d/11zrktUdb5FmJQgMyhtU26Wa-YzMES2jGcqEC7cw8tAo/edit) (internal drive) & [deployment checklist template](https://docs.google.com/spreadsheets/d/1tAQV6AqrRhqKusbA9Z6-5RBtOUknjkXVJXyF-Qp1Zls/edit#gid=1709744959) (internal drive)
+    - Create the customer Slack channel
+    - Generate the customer license key 
+    - Share the license key with the customer (7 day link)
+    - Schedule the customer onboarding kickoff call
+    - Collect deployment details (if not completed during POC)
+    - Schedule the recurring customer check-in
+    - Owns running the meeting, note taking, TODO follow up, etc. 
+
+
+## Fleet's W-9
+
+A recent signed copy of Fleet's W-9 form can be found in [this confidential PDF in Google Drive](https://drive.google.com/file/d/1ugXazEBk1oVm_LqGbYNsIFECcv5jXLA9/view?usp=drivesdk).
+
+## Paying Fleet
+For customers with hundreds or more hosts, Fleet accepts payment via wire transfer or electronic debit (ACH/SWIFT).
+
+Fleet team members can provide remittance information to customers by exporting ["💸 Paying Fleet"](https://docs.google.com/document/d/1KP_-x9c1x3sS1X9Q8Wlib2H7tq69xRONn1KMA3nVFQc/edit) into a PDF.
+
+
+
+
 
 ## Customer success calls
 
@@ -44,27 +115,85 @@ When we do prospect calls, add the customer's name in both the google doc title 
   - an alternative date and time. Suggest two to three options from which the customer can choose.
     - Confirm that contact information is accurate and that the customer can receive and access meeting invites.
 
-> **Customer etiquette**. When communicating with the customer, remember to approach the situation with empathy. Anything could have happened.
+## Customer support service level agreements (SLA's)
 
-### Next steps after a customer conversation 
+### Fleet Community Edition
+| Impact Level | Definition | Preferred Contact | Response Time |
+|:---|:---|:---|:---|
+| All Inquiries | Any request regardless of impact level or severity | Osquery #fleet Slack channel | No guaranteed resolution |
 
-After a customer conversation, it can sometimes feel like there are 1,001 things to do, but it can be hard to know where to start.  Here are some tips: 
+Note: If you're using Fleet Free, you can also access community support by opening an issue in the [Fleet GitHub](https://github.com/fleetdm/fleet/) repository.
 
-## Support process
+### Fleet Premium
+| Impact Level | Definition | Preferred Contact | Response Time |
+|:-----|:----|:----|:-----|
+| Emergency (P0) | Your production instance of Fleet is unavailable or completely unusable. For example, if Fleet is showing 502 errors for all users. | Expedited phone/chat/email support during business hours. </br></br>Email the contact address provided in your Fleet contract or chat with us via your dedicated private Slack channel | **≤4 hours** |
+| High (P1) | Fleet is highly degraded with significant business impact. | Expedited phone/chat/email support during business hours. </br></br>Email the contact address provided in your Fleet contract or chat with us via your dedicated private Slack channel | **≤4 business hours** |
+| Medium (P2) | Something is preventing normal Fleet operation, and there may or may not be minor business impact. | Standard email/chat support | ≤1 business day | 
+| Low (P3) | Questions or clarifications around features, documentation, deployments, or 'how to's'. | Standard email/chat support | 1-2 business days | 
+
+Note: Fleet business hours for support are Monday-Friday, 7AM-4PM Pacific Time, excluding current U.S. federal holidays during which responses may be delayed for Medium and Low impact issues.
+
+
+### Fleet Ultimate
+| Impact Level | Definition | Preferred Contact | Response Time |
+|:---- |:---- |:---- |:---- |
+| Emergency (P0) | Your production instance of Fleet is unavailable or completely unusable. For example, if Fleet is showing 502 errors for all users. | Call or text the emergency support phone number in your Fleet contract. </br></br>Email via the emergency support email address provided in your contract. | **≤1 hour or ≤2 hours** outside of business hours |
+| High (P1) | Fleet is highly degraded with significant business impact. | Expedited phone/chat/email support during business hours. </br></br>Email the contact address provided in your Fleet contract or chat with us via your dedicated private Slack channel | **≤2 hours or ≤4 hours** outside of business hours |
+| Medium (P2) | Something is preventing normal Fleet operation, and there may or may not be minor business impact. | Standard email/chat support | ≤1 business day | 
+| Low (P3) | Questions or clarifications around features, documentation, deployments, or 'how to's'. | Standard email/chat support | ≤1 business day | 
+
+Note: Fleet business hours for support are Monday-Friday, 7AM-4PM Pacific Time, excluding current U.S. federal holidays during which responses may be delayed for Medium and Low impact issues.
+
+#### Flow of communication in the event of an emergency (P0) request
+![Screen Shot 2022-12-05 at 10 22 43 AM](https://user-images.githubusercontent.com/114112018/205676145-38491aa2-288d-4a6c-a611-a96b5a87a0f0.png)
+
+## Customer support workflow for Slack + Zendesk
+
+#### This section outlines both the automated workflows and manual triggers associated with Fleet's Slack integration to Zendesk. The purpose of this integration is to:
+- Provide Fleet with better service level agreement (SLA) tracking on requests (especially those submitted outside of business hours)
+- Better track threads for issues that require advanced troubleshooting
+- Consolidate support requests into a single-source, searchable system for faster issue resolution in the future 
+
+#### There are three different situations when a customer support request could result in a ticket being created in Zendesk. They are as follows: 
+1. When a request has been submitted outside of business hours via Slack automation
+2. When a Fleet staff member has flagged an issue that requires advanced troubleshooting and determines that they want to move it into Zendesk for management 
+3. When any Fleet user submits a support request via email
+
+#### Workflow when a request is submitted outside of business hours:
+1. A new message is posted in any Slack channel
+2. (Zapier filter) The automation will continue if the message is:
+    - Not from a Fleet team member
+    - Posted outside of Fleet’s business hours
+    - In a specific customer channel (manually designated by Customer Success)   
+3. (Zendesk) Search for an existing Zendesk ticket by the Slack thread ID or create one if it does not exist.
+4. (Slack) If a new Zendesk ticket was created, reply to the Slack message in a thread.
+    - Hi @username, it's currently outside Fleet's support hours. (6am - 4pm PT). We've created a support ticket based on your message, and a Fleet team member will respond as soon as possible. If you have more questions or comments, feel free to reply in this thread, and we'll add them to the ticket.
+5. (Zendesk) If an existing Zendesk ticket was found by the search, add the Slack message to the existing ticket as a new comment.
+
+#### Things to note: 
+- New customer channels that the automation will run in must be configured manually. Submit requests for additions during automation office hours.
+- New tickets created from thread replies will contain a link to the slack thread, but will only have the new message. 
+- This zap does not support file uploads and attachments. Tickets created for messages with images attached will not have the attachments, and the automation will not run if someone uploads a file without a message. 
+
+#### Workflow when a request is submitted outside of business hours:
+![Screen Shot 2022-12-01 at 11 39 54 AM](https://user-images.githubusercontent.com/114112018/205109512-d35f4907-1169-41f5-acab-e23e3506e050.png)
+
+## Customer support process
 
 This section outlines Fleet's customer and community support process.
-- Basic help desk resolution and service delivery -> the CS team handles these with occasional support from L2.
-- In-depth technical support -> the CS team with L2 oncall technician.
-- Expert product and service support -> the CS team liaises with L2 and L3 on-call technicians.
+- The customer support engineering (CSE) team handles basic help desk resolution and service delivery issues (P3 and P4) with assistance from L2 on-call and the solutions architecture team as needed.
+- The CSE team handles in depth technical issues (P1 and P2) in conjunction with L2 on-call.
+- The CSE team handles expert technical product and services support in coordination with the L2 and L3 on-call technicians.
 
 
-If possible, the resulting solution should be more straightforward in each case in the documentation and/or the FAQs.
+Whenever possible, the resulting solution should be documented as an update to an existing FAQ guide or new documentation article.
 
 The support process is accomplished via on-call rotation and the weekly on-call retro meeting.
 
 The on-call engineer holds responsibility for responses to technical Slack comments, Slack threads, and GitHub issues raised by customers and the community, which the Customer Success team cannot handle.
 
-Slack messages have a 24-hour SLA, and the Slack channel should have a notice at the top explaining so.
+Support issues should be handled in the relevant Slack channel rather than Direct Messages (DMs). This will ensure that questions and solutions can be easily referenced in the future. If it is necessary to use DMs to share sensitive information, a summary of the conversation should be posted in the Slack channel as well. 
 
 The weekly on-call retro at Fleet provides time to discuss highlights and answer the following questions about the previous week's on-call:
 
@@ -76,7 +205,31 @@ The weekly on-call retro at Fleet provides time to discuss highlights and answer
 
 This way, the Fleet team can constantly improve the effectiveness and experience during future on-call rotations.
 
-### Customer support responses
+### What to include in a support request
+1. Required details that will help speed up time to resolution:
+    - Fleet server version
+    - Agent version 
+        - Osquery or fleetd?
+    - Operating system
+    - Web browser
+    - Expected behavior
+    - Actual behavior
+2. Details that are nice to have but not required. These may be requested by Fleet support as needed:
+    - Amount of total hosts
+    - Amount of online hosts
+    - Amount of scheduled queries
+    - Amount and size (CPU/Mem) of the Fleet instances
+    - Fleet instances CPU and Memory usage while the issue has been happening
+    - MySQL flavor/version in use
+    - MySQL server capacity (CPU/Mem)
+    - MySQL CPU and Memory usage while the issue has been happening
+    - Are MySQL read replicas configured? If so, how many?
+    - Redis version and server capacity (CPU/Mem)
+    - Is Redis running in cluster mode?
+    - Redis CPU and Memory usage while the issue has been happening
+    - The output of fleetctl debug archive
+
+### Fleet responses to customer support issues
 
 When a customer encounters an unexpected error on fleetdm.com, it is important that we contact them quickly to resolve the issue. 
 
@@ -101,7 +254,8 @@ I wanted to personally apologize for our mistake and let you know we're looking 
 
 Thank you for trying Fleet!"
 
-## Customer requests
+### Documenting customer requests in GitHub
+
 Locate the relevant issue or create it if it doesn't already exist (to avoid duplication, be creative when searching GitHub for issues - it can often take a couple of tries with different keywords to find an existing issue). 
 
 When creating a new issue, make sure the following:
@@ -111,32 +265,64 @@ When creating a new issue, make sure the following:
 - Is there a key date or timeframe that the customer hopes to meet?  If so, please post about that in #g-product with a link to the issue, so the team can discuss it before committing to a time frame.
 - Have we provided a link to that issue for the customer to remind everyone of the plan and for the sake of visibility, so other folks who weren't directly involved are up to speed  (e.g., "Hi everyone, here's a link to the issue we discussed on today's call: […link…](https://omfgdogs.com)")?
 
-## Assistance from engineering
+### Assistance from engineering
 
 Customer team members can reach the engineering oncall for assistance by writing a message with `@oncall` in the `#help-engineering` channel of the Fleet Slack.
 
 ## Runbook
 
 ### Responding to a request to change a credit card number
-To change a customer's credit card number, you identify the customer's account email, log into Stripe, and choose the subscriptions associated with that account. You can then email the customer an invoice, and they can update the payment method on file.
+
+You can help a Premium license dispenser customers change their credit card by directing them to their [account dashboard](https://fleetdm.com/customers/dashboard). On that page, the customer can update their billing card by clicking the pencil icon next to their billing information.
+
+### Algolia crawler errors
+
+At least once every hour, an Algolia crawler reindexes the Fleet website's content. If an error occurs while the website is being indexed, Algolia will block our crawler and respond to requests with this message: `"This action cannot be executed on a blocked crawler"`.
+
+When this happens, you'll need to manually start the crawler in the [Algolia crawler dashboard](https://crawler.algolia.com/admin/) to unblock it. 
+You can do this by logging into the crawler dashboard using the login saved in 1password and clicking the "Restart crawling" button on our crawler's "overview" page](https://crawler.algolia.com/admin/crawlers/497dd4fd-f8dd-4ffb-85c9-2a56b7fafe98/overview).
+
+No further action is needed if the crawler successfully reindexes the Fleet website. If another error occurs while the crawler is running, take a screenshot of the error and add it to the GitHub issue created for the alert and @mention `eashaw` for help.
 
 ## Customer codenames
 Occasionally, we will need to track public issues for customers that wish to remain anonymous on our public issue tracker. To do this, we choose an appropriate minor planet name from this [Wikipedia page](https://en.wikipedia.org/wiki/List_of_named_minor_planets_(alphabetical)) and create a label which we attach to the issue and any future issues for this customer.
 
 ## Generating a trial license key
-Fleet's self-service license dispenser is the best way to generate trial license keys for small deployments of Fleet Premium.
+1. Fleet's self-service license key creator is the best way to generate a proof of concept (POC) or renewal/expansion Fleet Premium license key. 
+    - [Here is a tutorial on using the self-service method](https://www.loom.com/share/b519e6a42a7d479fa628e394ee1d1517) (internal video)
+    - Pre-sales license key DRI is the Director of Solutions Architecture
+    - Post-sales license key DRI is the VP of Customer Success
 
-To generate a trial license key for a larger deployment, [create an opportunity issue](https://github.com/fleetdm/confidential/issues/new/choose) for the customer and follow the instructions in the issue for generating a trial license key.
-
-## Documentation updates
-Occasionally, users will email or Slack questions about product usage. We will track these requests and occasionally update our documentation to simplify things for our users. We have a Zapier integration that will automatically create an entry in our customer questions Google doc (in Slack, right-click on the customer question and select send to Zapier). At the end of the week, one of our team members will take each request in the spreadsheet and make any helpful documentation updates to help prevent similar questions in the future.
-
-> **Note** When submitting any pull request that changes Markdown files in the docs, request an editor review from Desmi Dizney.
+2. Legacy method: [create an opportunity issue](https://github.com/fleetdm/confidential/issues/new/choose) for the customer and follow the instructions in the issue for generating a trial license key.
 
 ## Customer contracts
 Fleet's subscription agreement is available at [fleetdm.com/terms](https://fleetdm.com/terms). 
 
 Fleeties can find a summary of contract terms in the relevant [customer's Salesforce opportunity.](https://fleetdm.lightning.force.com/lightning/o/Opportunity/list?filterName=Recent)
+
+### Standard terms
+For all subscription agreements, NDAs, and similar contracts, Fleet maintains a [standard set of terms and maximum allowable adjustments for those terms](https://docs.google.com/spreadsheets/d/1gAenC948YWG2NwcaVHleUvX0LzS8suyMFpjaBqxHQNg/edit#gid=1136345578).
+
+Exceptions to these maximum allowable adjustments always require CEO approval, whether in the form of redlines to Fleet's agreements or in terms on a prospective customer's own contract.
+
+### Non-standard NDAs
+
+To get a non-standard NDA (a non-disclosure agreement from another party) signed, [request a legal review](https://fleetdm.com/handbook/business-operations#intake).
+
+### Reviewing subscription agreement
+
+To quickly get help doing a legal review of a prospect subscription agreement, with or without redlines:
+
+1. Visit https://github.com/fleetdm/confidential/issues/new/choose
+2. Select "Contract signature or legal review"
+3. Follow the instructions in the "Submitting this request" section
+
+If the prospect/customer/partner is originating the request for signature:
+1. Communicate to the prospect that the Fleet signatory is Mike McNeil, CEO and share his email.
+2. Mike will create the github issue mentioned above when he gets request
+3. Mike will forward to business operations for review
+4. Business operations will notify Mike and the requestor (via GitHub comment w/ at-mention) when ready for signature
+5. Mike will sign and close the issue.  (This sends a notification to the requestor automatically.)
 
 ## Customer DRI change
 Sometimes there is a change in the champion within the customer's organization.
@@ -162,13 +348,19 @@ Sometimes there is a change in the champion within the customer's organization.
 
 The Fleet sales team embodies [our values](https://fleetdm.com/handbook/company#values) in every aspect of our work. Specifically, we continuously work to overperform and achieve strong results. We prioritize efficiency in our processes and operations. We succeed because of transparent, cross-functional collaboration. We are committed to hiring for and celebrating diversity, and we strive to create an environment of inclusiveness and belonging for all. We embrace a spirit of iteration, understanding that we can always improve.
 
+### Outreach 
+
+**Outreach software**
+
+At Fleet we use Outreach for sending emails to community members based on triggers or as part of campaigns. To get access to Outreach ask for a license in `#g-business-operations` [Internal video](https://www.loom.com/share/16bdb5dce92649f79aecb89112d95745)(Internal doc).
+
 ### Outreach one-pager
 
-Our one-pager offers a summary of what Fleet does. It can help stakeholders become familiar with the company and product while also being a useful tool the Growth team uses for sales outreach. Find Fleet's outreach one-pager in this [Google Doc](https://docs.google.com/presentation/d/1GzSjUZj1RrRBpa_yHJjOrvOTsldQQKfq927vpKP1lpU/edit?usp=sharing).
+Our one-pager offers a summary of what Fleet does. It can help stakeholders become familiar with the company and product while also being a useful tool the Growth team uses for sales outreach. Find Fleet's outreach one-pager [here](https://drive.google.com/file/d/1FS7Nkh_izwRqNsupx_KKUaK9bXzlQ_6r/view?usp=sharing).
 
 ### Intro deck
 
-Fleet's intro deck adds additional detail to our pitch. Find it in [Google Slides](https://docs.google.com/presentation/d/1GzSjUZj1RrRBpa_yHJjOrvOTsldQQKfq927vpKP1lpU/edit?usp=sharing).
+Fleet's intro deck adds additional detail to our pitch. Find it in [pdf](https://drive.google.com/file/d/1onSXxQgYPwt1plAfBY4dG34uXabtd25T/view?usp=share_link).
 
 ### Intro video
 
@@ -189,6 +381,11 @@ In the case of a prospect or customer request, we strive to adhere to the follow
 - Talk to an expert: prospects can schedule chats via our calendar tool
 - All other enquiries: 1-2 days
 
+#### Web chat on-call
+The web chat will be monitored by an on-call rotation. If you are unable to answer a technical/product question, ask the Solution Consultant (SC) in #sales. If the SC is unavailable, post in # help-engineering / #help-product accordingly.
+Transition to the next week on Friday night into Saturday (e.g. Carlos’s shift starts at 12am on 1/21 for the week of 1/23)
+Respond “in-thread” in Slack “_from-prospective-customers”. In-channel reminders for the next person starting their on-call shift are automated with notifications issued every Monday at the beginning of the day.
+
 Fleet employees can find other expectations for action and response times in this [internal document](https://docs.google.com/presentation/d/104-TRXlY55g303q2xazY1bpcDx4dHqS5O5VdJ05OwzE/edit?usp=sharing)
 
 ### Salesforce lead status flow
@@ -207,7 +404,7 @@ To track the stage of the sales cycle that a lead is at, we use the following st
 | Closed do not contact | Lead does not meet BANT criteria for conversion, and we should not reach out to them again. |
 | SAO Converted | Lead has met BANT criteria and successfully converted to an opportunity. |
 
-At times, our sales team will reach out to prospective customers before they come to Fleet for information. Our cold approach is inspired by Daniel Grzelak’s (Founder, investor, advisor, hacker, CISO) [LinkedIn post](https://www.linkedin.com/posts/danielgrzelak_if-you-are-going-to-do-a-cold-approach-be-activity-6940518616459022336-iYE7). The following are the keys to an engaging cold approach. Since cold approaches like these can be easily ignored as mass emails, it’s important to personalize each one. 
+At times, our sales team will reach out to prospective customers before they come to Fleet for information. Our cold approach is inspired by Daniel Grzelak’s (Founder, investor, advisor, hacker, CISO) [LinkedIn post](https://www.linkedin.com/posts/danielgrzelak_if-you-are-going-to-do-a-cold-approach-be-activity-6940518616459022336-iYE7). The following are the keys to an engaging cold approach. Since cold approaches like these can be easily ignored as mass emails, it’s important to personalize each one.
 
 - Research each prospect.
 - Praise what’s great about their company.
@@ -217,6 +414,8 @@ At times, our sales team will reach out to prospective customers before they com
 - Keep an enthusiastic and warm tone.
 - Be personable.
 - Ask for the meeting with a proposed time.
+
+Here is another [LinkedIn post](https://www.linkedin.com/posts/davidtropic_i-got-the-best-cold-email-ive-ever-gotten-activity-6991066918363267072-yeXN) with an example of a great personalized cold outreach.
 
 Importantly, when we interact with CISOs or, for that matter, any member of a prospective customer organization, we adhere to the principles in this [LinkedIn post](https://www.linkedin.com/pulse/selling-ciso-james-turner). Specifically:
 
@@ -299,13 +498,14 @@ The following table lists the Customer's group's rituals, frequency, and Directl
 | Internal follow-up | Daily | Go through Fleet's internal Slack channels to check for any relevant new information or tasks from other teams. | Kathy Satterlee |
 | [Customer voice](https://docs.google.com/document/d/15Zn6qdm9NyNM7C9kLKtvgMKsuY4Hpgo7lABOBhw7olI/edit?usp=sharing) | Weekly | Prepare and review the health and latest updates from Fleet's key customers and active proof of concepts (POCs), plus other active support items related to community support, community engagement efforts, contact form or chat requests, self-service customers, outages, and more. | Kathy Satterlee  |
 | Stand-up | Weekly | Meet with the Engineering team three to four times a week to share information and prioritize issues. | Kathy Satterlee |
-| Customer request backlog | Weekly | Check-in before product office hours to make sure that all information necessary has been gathered before presenting customer requests and feedback to the Product team. | Kathy Satterlee |
-| Product office hours | Weekly | Present and advocate for requests and ideas brought to Fleet's attention by customers that are interesting from a product perspective. | Kathy Satterlee |
+| Customer request backlog | Weekly | Check-in before the 🗣️ Product Feature Requests meeting to make sure that all information necessary has been gathered before presenting customer requests and feedback to the Product team. | Kathy Satterlee |
+| 🗣️ Product Feature Requests | Weekly | Present and advocate for requests and ideas brought to Fleet's attention by customers that are interesting from a product perspective. | Kathy Satterlee |
 | Customer meetings | Weekly | Check-in on how product and company are performing, provide updates on new product features or progress on customer requests.  These are private meetings with one meeting for each individual commercial customer. | Kathy Satterlee |
 | Release announcements | Every three weeks | Update customers on new features and resolve issues in an upcoming release. | Kathy Satterlee        |
 | Sales huddle | Weekly | Agenda: Go through every [open opportunity](https://fleetdm.lightning.force.com/lightning/o/Opportunity/list?filterName=00B4x00000CTHZIEA5) and update the next steps. | Alex Mitchell
 [Salesforce contributor experience checkup](#salesforce-contributor-experience-checkups)| Monthly | Make sure all users see a detailed view of contacts, opportunities, accounts, and leads. | Nathan Holliday |
-| Lead pipeline review  | Weekly | Agenda: Review leads by status/stage; make sure SLAs are met. | Alex Mitchell 
+| Lead pipeline review  | Weekly | Agenda: Review leads by status/stage; make sure SLAs are met. | Alex Mitchell |
+| Dripify review | Daily | Review responses to Dripify sequencing, respond to standard messages, escalate urgent messages in `#help-CEO`. | Brad Macdowall
 
 
 ## Slack channels
@@ -313,7 +513,7 @@ The following [Slack channels are maintained](https://fleetdm.com/handbook/compa
 
 | Slack channel                       | [DRI](https://fleetdm.com/handbook/company#group-slack-channels)    |
 |:------------------------------------|:--------------------------------------------------------------------|
-| `#g-customers`           | Zay Hanlon                                                     |
+| `#g-customer-experience`           | Zay Hanlon                                                     |
 | `#fleet-at-*` _(customer channels)_ | Kathy Satterlee                                                     |
 | `#g-sales`                     | Alex Mitchell |
 | `#_from-prospective-customers` | Alex Mitchell |

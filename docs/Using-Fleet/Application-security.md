@@ -1,6 +1,6 @@
 # Application security
 
-- [Describe your secure coding practices](#describe-your-secure-coding-practices-including-code-reviews-use-of-staticdynamic-security-testing-tools-3rd-party-scansreviews)
+- [Describe your secure coding practices (SDLC)](#describe-your-secure-coding-practices-including-code-reviews-use-of-staticdynamic-security-testing-tools-3rd-party-scansreviews)
 - [SQL injection](#sql-injection)
 - [Broken authentication](#broken-authentication--authentication-session-management-flaws-that-compromise-passwords-keys-session-tokens-etc)
   - [Passwords](#passwords)
@@ -38,7 +38,7 @@ Passwords are never stored in plaintext in the database. We store a `bcrypt`ed h
 
 #### Authentication tokens
 
-The size and expiration time of session tokens is admin-configurable. See [The documentation on session duration](../Deploying/Configuration.md#session-duration).
+The size and expiration time of session tokens is admin-configurable. See [The documentation on session duration](https://fleetdm.com/docs/deploying/configuration#session-duration).
 
 It is possible to revoke all session tokens for a user by forcing a password reset.
 

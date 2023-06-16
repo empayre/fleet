@@ -1,11 +1,20 @@
 /* eslint-disable  @typescript-eslint/explicit-module-boundary-types */
 import sendRequest from "services";
 import endpoints from "utilities/endpoints";
-import { ILoadAllPoliciesResponse, IPolicyFormData } from "interfaces/policy";
+import { ILoadTeamPoliciesResponse, IPolicyFormData } from "interfaces/policy";
+import { API_NO_TEAM_ID } from "interfaces/team";
 
 export default {
   create: (data: IPolicyFormData) => {
-    const { name, description, query, team_id, resolution, platform } = data;
+    const {
+      name,
+      description,
+      query,
+      team_id,
+      resolution,
+      platform,
+      critical,
+    } = data;
     const { TEAMS } = endpoints;
     const path = `${TEAMS}/${team_id}/policies`;
 
@@ -15,10 +24,19 @@ export default {
       query,
       resolution,
       platform,
+      critical,
     });
   },
   update: (id: number, data: IPolicyFormData) => {
-    const { name, description, query, team_id, resolution, platform } = data;
+    const {
+      name,
+      description,
+      query,
+      team_id,
+      resolution,
+      platform,
+      critical,
+    } = data;
     const { TEAMS } = endpoints;
     const path = `${TEAMS}/${team_id}/policies/${id}`;
 
@@ -28,11 +46,19 @@ export default {
       query,
       resolution,
       platform,
+      critical,
     });
   },
-  destroy: (team_id: number, ids: number[]) => {
+  destroy: (teamId: number | undefined, ids: number[]) => {
+    if (!teamId || teamId <= API_NO_TEAM_ID) {
+      return Promise.reject(
+        new Error(
+          `Invalid team id: ${teamId} must be greater than ${API_NO_TEAM_ID}`
+        )
+      );
+    }
     const { TEAMS } = endpoints;
-    const path = `${TEAMS}/${team_id}/policies/delete`;
+    const path = `${TEAMS}/${teamId}/policies/delete`;
 
     return sendRequest("POST", path, { ids });
   },
@@ -42,7 +68,7 @@ export default {
 
     return sendRequest("GET", path);
   },
-  loadAll: (team_id?: number): Promise<ILoadAllPoliciesResponse> => {
+  loadAll: (team_id?: number): Promise<ILoadTeamPoliciesResponse> => {
     const { TEAMS } = endpoints;
     const path = `${TEAMS}/${team_id}/policies`;
     if (!team_id) {

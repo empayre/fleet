@@ -5,6 +5,11 @@ on:
     tags:
       - 'fleet-*'
 
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
 defaults:
   run:
     # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
@@ -15,7 +20,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     environment: Docker Hub
     permissions:
       contents: write
@@ -26,15 +31,15 @@ jobs:
           fetch-depth: 0 # Needed for goreleaser
 
       - name: Login to Docker Hub
-        uses: docker/login-action@49ed152c8eca782a232dede0303416e8f356c37b # v1.10.0
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
 
       - name: Set up Go
-        uses: actions/setup-go@268d8c0ca0432bb2cf416faae41297df9d262d7f # v2
+        uses: actions/setup-go@v2.1.3
         with:
-          go-version: 1.19.1
+          go-version: ${{ vars.GO_VERSION }}
 
       - name: Install JS Dependencies
         run: make deps-js
@@ -43,7 +48,7 @@ jobs:
         run: make deps-go
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@68acf3b1adf004ac9c2f0a4259e85c5f66e99bef
+        uses: goreleaser/goreleaser-action@f82d6c1c344bcacabba2c841718984797f664a6b
         with:
           distribution: goreleaser-pro
           version: latest
@@ -51,3 +56,26 @@ jobs:
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get tag
+        run: |
+          echo "TAG=$(git describe --tags |  sed -e "s/^fleet-//")" >> $GITHUB_OUTPUT
+        id: docker
+
+      - name: List tags for push
+        run: |
+          echo "The following TAGs are to be pushed: ${{ steps.docker.outputs.TAG }}"
+
+      - name: Login to quay.io
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          registry: quay.io
+          username: fleetdm+fleetreleaser
+          password: ${{ secrets.QUAY_REGISTRY_PASSWORD }}
+
+      - name: Tag and push to quay.io
+        run: |
+          for TAG in ${{ steps.docker.outputs.TAG }}; do
+          docker tag fleetdm/fleet:${TAG} quay.io/fleetdm/fleet:${TAG}
+          docker push quay.io/fleetdm/fleet:${TAG}
+          done

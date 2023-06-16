@@ -16,6 +16,11 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+const policyCols = `
+	p.id, p.team_id, p.resolution, p.name, p.query, p.description,
+	p.author_id, p.platforms, p.created_at, p.updated_at, p.critical
+`
+
 func (ds *Datastore) NewGlobalPolicy(ctx context.Context, authorID *uint, args fleet.PolicyPayload) (*fleet.Policy, error) {
 	if args.QueryID != nil {
 		q, err := ds.Query(ctx, *args.QueryID)
@@ -27,8 +32,8 @@ func (ds *Datastore) NewGlobalPolicy(ctx context.Context, authorID *uint, args f
 		args.Description = q.Description
 	}
 	res, err := ds.writer.ExecContext(ctx,
-		`INSERT INTO policies (name, query, description, resolution, author_id, platforms) VALUES (?, ?, ?, ?, ?, ?)`,
-		args.Name, args.Query, args.Description, args.Resolution, authorID, args.Platform,
+		`INSERT INTO policies (name, query, description, resolution, author_id, platforms, critical) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		args.Name, args.Query, args.Description, args.Resolution, authorID, args.Platform, args.Critical,
 	)
 	switch {
 	case err == nil:
@@ -59,7 +64,7 @@ func policyDB(ctx context.Context, q sqlx.QueryerContext, id uint, teamID *uint)
 
 	var policy fleet.Policy
 	err := sqlx.GetContext(ctx, q, &policy,
-		fmt.Sprintf(`SELECT p.*,
+		fmt.Sprintf(`SELECT `+policyCols+`,
 		    COALESCE(u.name, '<deleted>') AS author_name,
 			COALESCE(u.email, '') AS author_email,
        		(select count(*) from policy_membership where policy_id=p.id and passes=true) as passing_host_count,
@@ -83,10 +88,10 @@ func policyDB(ctx context.Context, q sqlx.QueryerContext, id uint, teamID *uint)
 func (ds *Datastore) SavePolicy(ctx context.Context, p *fleet.Policy) error {
 	sql := `
 		UPDATE policies
-			SET name = ?, query = ?, description = ?, resolution = ?, platforms = ?
+			SET name = ?, query = ?, description = ?, resolution = ?, platforms = ?, critical = ?
 			WHERE id = ?
 	`
-	result, err := ds.writer.ExecContext(ctx, sql, p.Name, p.Query, p.Description, p.Resolution, p.Platform, p.ID)
+	result, err := ds.writer.ExecContext(ctx, sql, p.Name, p.Query, p.Description, p.Resolution, p.Platform, p.Critical, p.ID)
 	if err != nil {
 		return ctxerr.Wrap(ctx, err, "updating policy")
 	}
@@ -292,16 +297,7 @@ func listPoliciesDB(ctx context.Context, q sqlx.QueryerContext, teamID, countsFo
 		ctx,
 		q,
 		&policies,
-		fmt.Sprintf(`SELECT p.id,
-      p.team_id,
-      p.resolution,
-      p.name,
-      p.query,
-      p.description,
-      p.author_id,
-      p.platforms,
-      p.created_at,
-      p.updated_at,
+		fmt.Sprintf(`SELECT `+policyCols+`,
       COALESCE(u.name, '<deleted>') AS author_name,
       COALESCE(u.email, '') AS author_email,
       %s
@@ -316,16 +312,7 @@ func listPoliciesDB(ctx context.Context, q sqlx.QueryerContext, teamID, countsFo
 }
 
 func (ds *Datastore) PoliciesByID(ctx context.Context, ids []uint) (map[uint]*fleet.Policy, error) {
-	sql := `SELECT p.id,
-      p.team_id,
-      p.resolution,
-      p.name,
-      p.query,
-      p.description,
-      p.author_id,
-      p.platforms,
-      p.created_at,
-      p.updated_at,
+	sql := `SELECT ` + policyCols + `,
       COALESCE(u.name, '<deleted>') AS author_name,
       COALESCE(u.email, '') AS author_email,
       (select count(*) from policy_membership where policy_id=p.id and passes=true) as passing_host_count,
@@ -395,7 +382,7 @@ func (ds *Datastore) PolicyQueriesForHost(ctx context.Context, host *fleet.Host)
 	if host.FleetPlatform() == "" {
 		// We log to help troubleshooting in case this happens, as the host
 		// won't be receiving any policies targeted for specific platforms.
-		level.Error(ds.logger).Log("err", fmt.Sprintf("host %d with empty platform", host.ID))
+		level.Error(ds.logger).Log("err", "unrecognized platform", "hostID", host.ID, "platform", host.Platform) //nolint:errcheck
 	}
 	q := dialect.From("policies").Select(
 		goqu.I("id"),
@@ -440,8 +427,8 @@ func (ds *Datastore) NewTeamPolicy(ctx context.Context, teamID uint, authorID *u
 		args.Description = q.Description
 	}
 	res, err := ds.writer.ExecContext(ctx,
-		`INSERT INTO policies (name, query, description, team_id, resolution, author_id, platforms) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		args.Name, args.Query, args.Description, teamID, args.Resolution, authorID, args.Platform)
+		`INSERT INTO policies (name, query, description, team_id, resolution, author_id, platforms, critical) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		args.Name, args.Query, args.Description, teamID, args.Resolution, authorID, args.Platform, args.Critical)
 	switch {
 	case err == nil:
 		// OK
@@ -495,19 +482,21 @@ func (ds *Datastore) ApplyPolicySpecs(ctx context.Context, authorID uint, specs 
 			author_id,
 			resolution,
 			team_id,
-			platforms
-		) VALUES ( ?, ?, ?, ?, ?, (SELECT IFNULL(MIN(id), NULL) FROM teams WHERE name = ?), ? )
+			platforms,
+		    critical
+		) VALUES ( ?, ?, ?, ?, ?, (SELECT IFNULL(MIN(id), NULL) FROM teams WHERE name = ?), ?, ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			query = VALUES(query),
 			description = VALUES(description),
 			author_id = VALUES(author_id),
 			resolution = VALUES(resolution),
-			platforms = VALUES(platforms)
+			platforms = VALUES(platforms),
+			critical = VALUES(critical)
 		`
 		for _, spec := range specs {
 			res, err := tx.ExecContext(ctx,
-				sql, spec.Name, spec.Query, spec.Description, authorID, spec.Resolution, spec.Team, spec.Platform,
+				sql, spec.Name, spec.Query, spec.Description, authorID, spec.Resolution, spec.Team, spec.Platform, spec.Critical,
 			)
 			if err != nil {
 				return ctxerr.Wrap(ctx, err, "exec ApplyPolicySpecs insert")
@@ -644,6 +633,7 @@ func (ds *Datastore) CleanupPolicyMembership(ctx context.Context, now time.Time)
 	const (
 		recentlyUpdatedPoliciesInterval = 24 * time.Hour
 
+		// Using `p.created_at < p.updated.at` to ignore newly created.
 		updatedPoliciesStmt = `
 			SELECT
 				p.id,
@@ -652,7 +642,7 @@ func (ds *Datastore) CleanupPolicyMembership(ctx context.Context, now time.Time)
 				policies p
 			WHERE
 				p.updated_at >= DATE_SUB(?, INTERVAL ? SECOND) AND
-				p.created_at < p.updated_at`  // ignore newly created
+				p.created_at < p.updated_at`
 
 		deleteMembershipStmt = `
 			DELETE
@@ -708,10 +698,76 @@ func (ds *Datastore) IncrementPolicyViolationDays(ctx context.Context) error {
 	})
 }
 
+func (ds *Datastore) IncreasePolicyAutomationIteration(ctx context.Context, policyID uint) error {
+	return ds.withRetryTxx(ctx, func(tx sqlx.ExtContext) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO policy_automation_iterations (policy_id, iteration) VALUES (?,1)
+			ON DUPLICATE KEY UPDATE iteration = iteration + 1;
+		`, policyID)
+		return err
+	})
+}
+
+// OutdatedAutomationBatch returns a batch of hosts that had a failing policy.
+func (ds *Datastore) OutdatedAutomationBatch(ctx context.Context) ([]fleet.PolicyFailure, error) {
+	var failures []fleet.PolicyFailure
+	err := ds.withRetryTxx(ctx, func(tx sqlx.ExtContext) error {
+		failures = failures[:0] // In case of retry (from withRetryTxx) empty the list of failures.
+		var hostIDs []uint
+
+		rows, err := tx.QueryContext(ctx, `
+			SELECT ai.policy_id, pm.host_id, h.hostname, h.computer_name
+				FROM policy_automation_iterations ai
+			    JOIN policy_membership pm ON pm.policy_id = ai.policy_id
+			        AND (pm.automation_iteration < ai.iteration
+			               OR pm.automation_iteration IS NULL)
+				JOIN hosts h ON pm.host_id = h.id
+				WHERE NOT pm.passes
+				LIMIT 1000
+				FOR UPDATE;
+		`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var f fleet.PolicyFailure
+			if err := rows.Scan(&f.PolicyID, &f.Host.ID, &f.Host.Hostname, &f.Host.DisplayName); err != nil {
+				return err
+			}
+			failures = append(failures, f)
+			hostIDs = append(hostIDs, f.Host.ID)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(hostIDs) == 0 {
+			return nil
+		}
+		query := `
+			UPDATE policy_membership pm SET pm.automation_iteration = (
+				SELECT ai.iteration
+				FROM policy_automation_iterations ai
+				WHERE pm.policy_id = ai.policy_id
+		   ) WHERE pm.host_id IN (?);`
+		query, args, err := sqlx.In(query, hostIDs)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, query, args...)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return failures, nil
+}
+
 func incrementViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) error {
 	const (
 		statsID        = 0
-		statsType      = "policy_violation_days"
+		globalStats    = true
+		statsType      = aggregatedStatsTypePolicyViolationsDays
 		updateInterval = 24 * time.Hour
 	)
 
@@ -721,21 +777,21 @@ func incrementViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) error {
 
 	// get current count of policy violation days from `aggregated_stats``
 	selectStmt := `
-		SELECT 
-			json_value, 
-			created_at, 
-			updated_at 
-		FROM 
-			aggregated_stats 
-		WHERE 
-			id = ? AND type = ?`
+		SELECT
+			json_value,
+			created_at,
+			updated_at
+		FROM
+			aggregated_stats
+		WHERE
+			id = ? AND global_stats = ? AND type = ?`
 	dest := struct {
 		CreatedAt time.Time       `json:"created_at" db:"created_at"`
 		UpdatedAt time.Time       `json:"updated_at" db:"updated_at"`
 		StatsJSON json.RawMessage `json:"json_value" db:"json_value"`
 	}{}
 
-	err := sqlx.GetContext(ctx, tx, &dest, selectStmt, statsID, statsType)
+	err := sqlx.GetContext(ctx, tx, &dest, selectStmt, statsID, globalStats, statsType)
 	switch {
 	case err == sql.ErrNoRows:
 		// no previous counts exists so initialize counts as zero and proceed to increment
@@ -777,12 +833,12 @@ func incrementViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) error {
 
 	// upsert `aggregated_stats` with new count
 	upsertStmt := `
-		INSERT INTO 
-			aggregated_stats (id, type, json_value) 
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE 
+		INSERT INTO
+			aggregated_stats (id, global_stats, type, json_value)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
 			json_value = VALUES(json_value)`
-	if _, err := tx.ExecContext(ctx, upsertStmt, statsID, statsType, statsJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, upsertStmt, statsID, globalStats, statsType, statsJSON); err != nil {
 		return ctxerr.Wrap(ctx, err, "update policy violation days aggregated stats")
 	}
 
@@ -797,8 +853,9 @@ func (ds *Datastore) InitializePolicyViolationDays(ctx context.Context) error {
 
 func initializePolicyViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) error {
 	const (
-		statsID   = 0
-		statsType = "policy_violation_days"
+		statsID     = 0
+		globalStats = true
+		statsType   = aggregatedStatsTypePolicyViolationsDays
 	)
 
 	statsJSON, err := json.Marshal(PolicyViolationDays{})
@@ -807,13 +864,13 @@ func initializePolicyViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) er
 	}
 
 	stmt := `
-		INSERT INTO 
-			aggregated_stats (id, type, json_value) 
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE 
+		INSERT INTO
+			aggregated_stats (id, global_stats, type, json_value)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
 			json_value = VALUES(json_value),
 			created_at = CURRENT_TIMESTAMP`
-	if _, err := tx.ExecContext(ctx, stmt, statsID, statsType, statsJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, stmt, statsID, globalStats, statsType, statsJSON); err != nil {
 		return ctxerr.Wrap(ctx, err, "initialize policy violation days aggregated stats")
 	}
 
@@ -822,18 +879,19 @@ func initializePolicyViolationDaysDB(ctx context.Context, tx sqlx.ExtContext) er
 
 func amountPolicyViolationDaysDB(ctx context.Context, tx sqlx.QueryerContext) (int, int, error) {
 	const (
-		statsID   = 0
-		statsType = "policy_violation_days"
+		statsID     = 0
+		globalStats = true
+		statsType   = aggregatedStatsTypePolicyViolationsDays
 	)
 	var statsJSON json.RawMessage
 	if err := sqlx.GetContext(ctx, tx, &statsJSON, `
-		SELECT 
-			json_value 
-		FROM 
-			aggregated_stats 
-		WHERE 
-			id = ? AND type = ?
-	`, statsID, statsType); err != nil {
+		SELECT
+			json_value
+		FROM
+			aggregated_stats
+		WHERE
+			id = ? AND global_stats = ? AND type = ?
+	`, statsID, globalStats, statsType); err != nil {
 		return 0, 0, err
 	}
 

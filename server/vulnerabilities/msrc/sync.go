@@ -1,11 +1,12 @@
 package msrc
 
 import (
+	"context"
 	"fmt"
-	"net/http"
 
+	"github.com/fleetdm/fleet/v4/pkg/fleethttp"
 	"github.com/fleetdm/fleet/v4/server/fleet"
-	"github.com/fleetdm/fleet/v4/server/vulnerabilities/msrc/io"
+	"github.com/fleetdm/fleet/v4/server/vulnerabilities/io"
 	"github.com/fleetdm/fleet/v4/server/vulnerabilities/msrc/parsed"
 	"github.com/google/go-github/v37/github"
 )
@@ -15,28 +16,28 @@ import (
 // remote bulletins exist.
 func bulletinsDelta(
 	os []fleet.OperatingSystem,
-	local []io.SecurityBulletinName,
-	remote []io.SecurityBulletinName,
+	local []io.MetadataFileName,
+	remote []io.MetadataFileName,
 ) (
-	[]io.SecurityBulletinName,
-	[]io.SecurityBulletinName,
+	[]io.MetadataFileName,
+	[]io.MetadataFileName,
 ) {
 	if len(os) == 0 {
 		return remote, nil
 	}
 
-	var matching []io.SecurityBulletinName
+	var matching []io.MetadataFileName
 	for _, r := range remote {
 		for _, o := range os {
-			product := parsed.NewProduct(o.Name)
+			product := parsed.NewProductFromOS(o)
 			if r.ProductName() == product.Name() {
 				matching = append(matching, r)
 			}
 		}
 	}
 
-	var toDownload []io.SecurityBulletinName
-	var toDelete []io.SecurityBulletinName
+	var toDownload []io.MetadataFileName
+	var toDelete []io.MetadataFileName
 	for _, m := range matching {
 		var found bool
 		for _, l := range local {
@@ -57,15 +58,17 @@ func bulletinsDelta(
 	return toDownload, toDelete
 }
 
-// Sync syncs the local msrc security bulletins (contained in dstDir) for one or more operating systems with the security
-// bulletin published in Github.
+// SyncFromGithub syncs the local msrc security bulletins (contained in dstDir) for one or more operating
+// systems with the security bulletin published in Github.
+//
 // If 'os' is nil, then all security bulletins will be synched.
-func Sync(client *http.Client, dstDir string, os []fleet.OperatingSystem) error {
+func SyncFromGithub(ctx context.Context, dstDir string, os []fleet.OperatingSystem) error {
+	client := fleethttp.NewGithubClient()
 	rep := github.NewClient(client).Repositories
 	gh := io.NewGitHubClient(client, rep, dstDir)
 	fs := io.NewFSClient(dstDir)
 
-	if err := sync(os, fs, gh); err != nil {
+	if err := sync(ctx, os, fs, gh); err != nil {
 		return fmt.Errorf("msrc sync: %w", err)
 	}
 
@@ -73,21 +76,22 @@ func Sync(client *http.Client, dstDir string, os []fleet.OperatingSystem) error 
 }
 
 func sync(
+	ctx context.Context,
 	os []fleet.OperatingSystem,
 	fsClient io.FSAPI,
 	ghClient io.GitHubAPI,
 ) error {
-	remoteURLs, err := ghClient.Bulletins()
+	remoteURLs, err := ghClient.MSRCBulletins(ctx)
 	if err != nil {
 		return err
 	}
 
-	var remote []io.SecurityBulletinName
+	var remote []io.MetadataFileName
 	for r := range remoteURLs {
 		remote = append(remote, r)
 	}
 
-	local, err := fsClient.Bulletins()
+	local, err := fsClient.MSRCBulletins()
 	if err != nil {
 		return err
 	}

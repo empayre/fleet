@@ -12,6 +12,7 @@ import "./mode";
 import "./theme";
 
 export interface IFleetAceProps {
+  focus?: boolean;
   error?: string | null;
   fontSize?: number;
   label?: string;
@@ -33,6 +34,7 @@ export interface IFleetAceProps {
 const baseClass = "fleet-ace";
 
 const FleetAce = ({
+  focus,
   error,
   fontSize = 14,
   label,
@@ -70,16 +72,10 @@ const FleetAce = ({
   };
 
   const handleDelete = (deleteCommand: string) => {
-    const currentText = editorRef.current?.editor.getValue();
     const selectedText = editorRef.current?.editor.getSelectedText();
 
     if (selectedText) {
-      const remainingText = currentText?.replace(selectedText, "");
-      if (typeof remainingText !== "undefined") {
-        onChange && onChange(remainingText);
-        editorRef.current?.editor.navigateLeft();
-        editorRef.current?.editor.clearSelection();
-      }
+      editorRef.current?.editor.removeWordLeft();
     } else {
       editorRef.current?.editor.execCommand(deleteCommand);
     }
@@ -137,6 +133,7 @@ const FleetAce = ({
         width="100%"
         wrapEnabled={wrapEnabled}
         style={style}
+        focus={focus}
         commands={[
           {
             name: "commandName",

@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useContext } from "react";
 import { syntaxHighlight } from "utilities/helpers";
 
 import Modal from "components/Modal";
 import Button from "components/buttons/Button";
-import ExternalLinkIcon from "../../../../../../assets/images/icon-external-link-12x12@2x.png";
+import CustomLink from "components/CustomLink";
+import { AppContext } from "context/app";
+import { IPolicyWebhookPreviewPayload } from "interfaces/policy";
 
 const baseClass = "preview-data-modal";
 
@@ -11,10 +13,24 @@ interface IPreviewPayloadModalProps {
   onCancel: () => void;
 }
 
+interface IHostPreview {
+  id: number;
+  display_name: string;
+  url: string;
+}
+
+interface IPreviewPayload {
+  timestamp: string;
+  policy: IPolicyWebhookPreviewPayload;
+  hosts: IHostPreview[];
+}
+
 const PreviewPayloadModal = ({
   onCancel,
 }: IPreviewPayloadModalProps): JSX.Element => {
-  const json = {
+  const { isFreeTier } = useContext(AppContext);
+
+  const json: IPreviewPayload = {
     timestamp: "0000-00-00T00:00:00Z",
     policy: {
       id: 1,
@@ -27,6 +43,7 @@ const PreviewPayloadModal = ({
       resolution: "Turn on Gatekeeper feature in System Preferences.",
       passing_host_count: 2000,
       failing_host_count: 300,
+      critical: false,
     },
     hosts: [
       {
@@ -41,6 +58,9 @@ const PreviewPayloadModal = ({
       },
     ],
   };
+  if (isFreeTier) {
+    delete json.policy.critical;
+  }
 
   return (
     <Modal
@@ -52,14 +72,11 @@ const PreviewPayloadModal = ({
       <div className={`${baseClass}__preview-modal`}>
         <p>
           Want to learn more about how automations in Fleet work?{" "}
-          <a
-            href="https://fleetdm.com/docs/using-fleet/automations"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Check out the Fleet documentation
-            <img src={ExternalLinkIcon} alt="Open external link" />
-          </a>
+          <CustomLink
+            url="https://fleetdm.com/docs/using-fleet/automations"
+            text="Check out the Fleet documentation"
+            newTab
+          />
         </p>
         <div className={`${baseClass}__payload-request-preview`}>
           <pre>POST https://server.com/example</pre>

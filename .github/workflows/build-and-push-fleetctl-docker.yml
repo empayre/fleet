@@ -9,6 +9,11 @@ on:
         required: true
         type: string
 
+# This allows a subsequently queued workflow run to interrupt previous runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id}}
+  cancel-in-progress: true
+
 defaults:
   run:
     # fail-fast using bash -eo pipefail. See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#exit-codes-and-error-action-preference
@@ -28,15 +33,15 @@ jobs:
         uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
 
       - name: Login to Docker Hub
-        uses: docker/login-action@49ed152c8eca782a232dede0303416e8f356c37b # v1.10.0
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
 
       - name: Set up Go
-        uses: actions/setup-go@268d8c0ca0432bb2cf416faae41297df9d262d7f # v2
+        uses: actions/setup-go@v2.1.3
         with:
-          go-version: 1.19.1
+          go-version: 1.19.10
 
       - name: Install Go Dependencies
         run: make deps-go
@@ -49,3 +54,12 @@ jobs:
           docker tag fleetdm/fleetctl fleetdm/fleetctl:${{ inputs.image_tag }}
           docker push fleetdm/fleetctl:${{ inputs.image_tag }}
 
+      - name: Push To quay.io
+        id: push-to-quay
+        uses: redhat-actions/push-to-registry@9986a6552bc4571882a4a67e016b17361412b4df # v2.7.1
+        with:
+          image: fleetdm/fleetctl
+          tags: ${{ inputs.image_tag }}
+          registry: quay.io/
+          username: fleetdm+fleetreleaser
+          password: ${{ secrets.QUAY_REGISTRY_PASSWORD }}

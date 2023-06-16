@@ -1,43 +1,73 @@
 import React from "react";
 
 import ReactTooltip from "react-tooltip";
+import { IHostMacMdmProfile, BootstrapPackageStatus } from "interfaces/mdm";
+import getHostStatusTooltipText from "pages/hosts/helpers";
 
+import TooltipWrapper from "components/TooltipWrapper";
 import Button from "components/buttons/Button";
+import Icon from "components/Icon/Icon";
 import DiskSpaceGraph from "components/DiskSpaceGraph";
+import HumanTimeDiffWithDateTip from "components/HumanTimeDiffWithDateTip";
 import {
+  getHostDiskEncryptionTooltipMessage,
   humanHostMemory,
-  humanHostDetailUpdated,
   wrapFleetHelper,
 } from "utilities/helpers";
+import { DEFAULT_EMPTY_CELL_VALUE } from "utilities/constants";
+import StatusIndicator from "components/StatusIndicator";
+import PremiumFeatureIconWithTooltip from "components/PremiumFeatureIconWithTooltip";
 import IssueIcon from "../../../../../../assets/images/icon-issue-fleet-black-50-16x16@2x.png";
+import MacSettingsIndicator from "./MacSettingsIndicator";
+import HostSummaryIndicator from "./HostSummaryIndicator";
+import BootstrapPackageIndicator from "./BootstrapPackageIndicator/BootstrapPackageIndicator";
 
 const baseClass = "host-summary";
 
+interface IBootstrapPackageData {
+  status?: BootstrapPackageStatus | "";
+  details?: string;
+}
+
 interface IHostSummaryProps {
-  statusClassName: string;
   titleData: any; // TODO: create interfaces for this and use consistently across host pages and related helpers
+  bootstrapPackageData?: IBootstrapPackageData;
+  diskEncryptionEnabled?: boolean;
   isPremiumTier?: boolean;
+  isSandboxMode?: boolean;
   isOnlyObserver?: boolean;
   toggleOSPolicyModal?: () => void;
+  toggleMacSettingsModal?: () => void;
+  toggleBootstrapPackageModal?: () => void;
+  hostMdmProfiles?: IHostMacMdmProfile[];
+  mdmName?: string;
   showRefetchSpinner: boolean;
   onRefetchHost: (
     evt: React.MouseEvent<HTMLButtonElement, React.MouseEvent>
   ) => void;
-  renderActionButtons: () => JSX.Element;
+  renderActionButtons: () => JSX.Element | null;
   deviceUser?: boolean;
 }
 
 const HostSummary = ({
-  statusClassName,
   titleData,
+  bootstrapPackageData,
+  diskEncryptionEnabled,
   isPremiumTier,
+  isSandboxMode = false,
   isOnlyObserver,
   toggleOSPolicyModal,
+  toggleMacSettingsModal,
+  toggleBootstrapPackageModal,
+  hostMdmProfiles,
+  mdmName,
   showRefetchSpinner,
   onRefetchHost,
   renderActionButtons,
   deviceUser,
 }: IHostSummaryProps): JSX.Element => {
+  const { status, id, platform } = titleData;
+
   const renderRefetch = () => {
     const isOnline = titleData.status === "online";
 
@@ -51,21 +81,22 @@ const HostSummary = ({
         >
           <Button
             className={`
-              button
-              ${!isOnline ? "refetch-offline tooltip" : ""} 
+            button
+            ${!isOnline ? "refetch-offline tooltip" : ""}
               ${showRefetchSpinner ? "refetch-spinner" : "refetch-btn"}
             `}
             disabled={!isOnline}
             onClick={onRefetchHost}
             variant="text-icon"
           >
+            <Icon name="refresh" color="core-fleet-blue" size="small" />
             {showRefetchSpinner
               ? "Fetching fresh vitals...this may take a moment"
               : "Refetch"}
           </Button>
         </div>
         <ReactTooltip
-          place="bottom"
+          place="top"
           effect="solid"
           id="refetch-tooltip"
           backgroundColor="#3e4771"
@@ -80,7 +111,9 @@ const HostSummary = ({
 
   const renderIssues = () => (
     <div className="info-flex__item info-flex__item--title">
-      <span className="info-flex__header">Issues</span>
+      <span className="info-flex__header">
+        Issues{isSandboxMode && <PremiumFeatureIconWithTooltip />}
+      </span>
       <span className="info-flex__data">
         <span
           className="host-issue tooltip tooltip__tooltip-icon"
@@ -101,7 +134,7 @@ const HostSummary = ({
             Failing policies ({titleData.issues.failing_policies_count})
           </span>
         </ReactTooltip>
-        <span className={`total-issues-count`}>
+        <span className={"info-flex__data__text"}>
           {titleData.issues.total_issues_count}
         </span>
       </span>
@@ -121,32 +154,90 @@ const HostSummary = ({
     </div>
   );
 
+  const renderDiskEncryptionSummary = () => {
+    // TODO: improve this typing, platforms!
+    if (!["darwin", "windows", "chrome"].includes(platform)) {
+      return <></>;
+    }
+    const tooltipMessage = getHostDiskEncryptionTooltipMessage(
+      platform,
+      diskEncryptionEnabled
+    );
+    let statusText;
+    if (platform === "chrome") {
+      statusText = "Always on";
+    } else {
+      statusText = diskEncryptionEnabled ? "On" : "Off";
+    }
+    return (
+      <div className="info-flex__item info-flex__item--title">
+        <span className="info-flex__header">Disk encryption</span>
+        <TooltipWrapper tipContent={tooltipMessage} position="bottom">
+          {statusText}
+        </TooltipWrapper>
+      </div>
+    );
+  };
+
   const renderSummary = () => {
     return (
       <div className="info-flex">
         <div className="info-flex__item info-flex__item--title">
           <span className="info-flex__header">Status</span>
-          <span className={`${statusClassName} info-flex__data`}>
-            {titleData.status}
-          </span>
-        </div>
-        {titleData.issues?.total_issues_count > 0 &&
-          deviceUser &&
-          isPremiumTier &&
-          renderIssues()}
-        {titleData.issues?.total_issues_count > 0 &&
-          !deviceUser &&
-          renderIssues()}
-        {!deviceUser && isPremiumTier && renderHostTeam()}
-        <div className="info-flex__item info-flex__item--title">
-          <span className="info-flex__header">Disk space</span>
-          <DiskSpaceGraph
-            baseClass="info-flex"
-            gigsDiskSpaceAvailable={titleData.gigs_disk_space_available}
-            percentDiskSpaceAvailable={titleData.percent_disk_space_available}
-            id={"disk-space-tooltip"}
+          <StatusIndicator
+            value={status || ""} // temporary work around of integration test bug
+            tooltip={{
+              id,
+              tooltipText: getHostStatusTooltipText(status),
+              position: "bottom",
+            }}
           />
         </div>
+
+        {(titleData.issues?.total_issues_count > 0 || isSandboxMode) &&
+          isPremiumTier &&
+          renderIssues()}
+
+        {isPremiumTier && renderHostTeam()}
+
+        {platform === "darwin" &&
+          isPremiumTier &&
+          mdmName === "Fleet" && // show if 1 - host is enrolled in Fleet MDM, and
+          hostMdmProfiles &&
+          hostMdmProfiles.length > 0 && ( // 2 - host has at least one setting (profile) enforced
+            <HostSummaryIndicator title="macOS settings">
+              <MacSettingsIndicator
+                profiles={hostMdmProfiles}
+                onClick={toggleMacSettingsModal}
+              />
+            </HostSummaryIndicator>
+          )}
+
+        {bootstrapPackageData?.status && (
+          <HostSummaryIndicator title="Bootstrap package">
+            <BootstrapPackageIndicator
+              status={bootstrapPackageData.status}
+              onClick={toggleBootstrapPackageModal}
+            />
+          </HostSummaryIndicator>
+        )}
+
+        {platform !== "chrome" && (
+          <div className="info-flex__item info-flex__item--title">
+            <span className="info-flex__header">Disk space</span>
+            <DiskSpaceGraph
+              baseClass="info-flex"
+              gigsDiskSpaceAvailable={titleData.gigs_disk_space_available}
+              percentDiskSpaceAvailable={titleData.percent_disk_space_available}
+              id={`disk-space-tooltip-${titleData.id}`}
+              platform={platform}
+              tooltipPosition="bottom"
+            />
+          </div>
+        )}
+
+        {renderDiskEncryptionSummary()}
+
         <div className="info-flex__item info-flex__item--title">
           <span className="info-flex__header">Memory</span>
           <span className="info-flex__data">
@@ -164,7 +255,7 @@ const HostSummary = ({
               `${titleData.os_version}`
             ) : (
               <Button
-                onClick={() => toggleOSPolicyModal && toggleOSPolicyModal()}
+                onClick={() => toggleOSPolicyModal?.()}
                 variant="text-link"
                 className={`${baseClass}__os-policy-button`}
               >
@@ -173,28 +264,33 @@ const HostSummary = ({
             )}
           </span>
         </div>
-        {!deviceUser && (
-          <div className="info-flex__item info-flex__item--title">
-            <span className="info-flex__header">Osquery</span>
-            <span className="info-flex__data">{titleData.osquery_version}</span>
-          </div>
-        )}
+        <div className="info-flex__item info-flex__item--title">
+          <span className="info-flex__header">Osquery</span>
+          <span className="info-flex__data">{titleData.osquery_version}</span>
+        </div>
       </div>
     );
   };
 
+  const lastFetched = titleData.detail_updated_at ? (
+    <HumanTimeDiffWithDateTip timeString={titleData.detail_updated_at} />
+  ) : (
+    ": unavailable"
+  );
+
   return (
-    <>
+    <div className={baseClass}>
       <div className="header title">
         <div className="title__inner">
           <div className="display-name-container">
             <h1 className="display-name">
-              {deviceUser ? "My device" : titleData.display_name || "---"}
+              {deviceUser
+                ? "My device"
+                : titleData.display_name || DEFAULT_EMPTY_CELL_VALUE}
             </h1>
+
             <p className="last-fetched">
-              {`Last fetched ${humanHostDetailUpdated(
-                titleData.detail_updated_at
-              )}`}
+              {"Last fetched"} {lastFetched}
               &nbsp;
             </p>
             {renderRefetch()}
@@ -205,7 +301,7 @@ const HostSummary = ({
       <div className="section title">
         <div className="title__inner">{renderSummary()}</div>
       </div>
-    </>
+    </div>
   );
 };
 

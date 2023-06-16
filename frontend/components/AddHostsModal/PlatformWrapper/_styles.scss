@@ -48,18 +48,24 @@
 
   .input-field {
     &__textarea {
-      min-height: 70px;
+      min-height: 88px;
     }
 
     &__textarea,
     &--disabled {
       font-family: "SourceCodePro", $monospace;
-      font-weight: 600;
+      font-weight: $bold;
       font-size: 13px;
       color: $core-fleet-blue;
       line-height: 20px;
       margin-bottom: 0;
-      padding: $pad-medium $pad-large $pad-medium $pad-medium;
+      padding: 12px $pad-large 12px $pad-medium;
+    }
+  }
+
+  &__advanced--installer {
+    .input-field {
+      height: 105px;
     }
   }
 
@@ -72,14 +78,21 @@
   &__copy-message {
     font-weight: $regular;
     vertical-align: top;
+    background-color: $ui-light-grey;
+    border: solid 1px #e2e4ea;
+    border-radius: 10px;
+    padding: 2px 6px;
   }
 
   .buttons {
-    display: block;
+    display: flex;
+    flex-direction: row-reverse;
     align-items: center;
-    position: absolute;
-    right: 15px;
-    top: 40px;
+    position: relative;
+    top: 38px;
+    margin-right: $pad-medium;
+    height: 12px;
+    gap: $pad-small;
 
     a {
       display: flex;
@@ -94,7 +107,7 @@
 
   &__run-osquery-input {
     .buttons {
-      top: 12px;
+      top: 34px;
     }
   }
 
@@ -117,15 +130,13 @@
 
   &__advanced {
     padding-top: 6px;
-    .input-field__textarea {
-      min-height: 92px;
-    }
     .reveal-button {
       margin: 8px 0;
     }
   }
 
-  &__advanced--heading {
+  &__advanced--heading,
+  &__chromeos--heading {
     font-weight: $bold;
     margin-bottom: $pad-small;
   }
@@ -134,15 +145,23 @@
     font-weight: normal;
   }
 
-  &__advanced--installer {
-    p {
-      margin: 0;
+  &__chromeos--instructions,
+  &__advanced--instructions {
+    margin-bottom: $pad-medium;
+  }
+
+  &__chromeos-extension-id,
+  &__chromeos-url {
+    .buttons {
+      top: 34px;
     }
   }
 
-  &__advanced--osqueryd {
-    .buttons {
-      top: 90px;
+  &__chromeos-policy-for-extension {
+    height: 230px;
+
+    .input-field--disabled {
+      height: 190px;
     }
   }
 

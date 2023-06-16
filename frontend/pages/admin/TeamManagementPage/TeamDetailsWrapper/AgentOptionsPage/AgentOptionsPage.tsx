@@ -1,39 +1,57 @@
 import React, { useContext, useState, useEffect } from "react";
 import { useQuery } from "react-query";
 import { useErrorHandler } from "react-error-boundary";
+import { InjectedRouter } from "react-router";
 import yaml from "js-yaml";
 import { constructErrorString, agentOptionsToYaml } from "utilities/yaml";
-import endpoints from "utilities/endpoints";
 import { EMPTY_AGENT_OPTIONS } from "utilities/constants";
 
 import { NotificationContext } from "context/notification";
+import useTeamIdParam from "hooks/useTeamIdParam";
 import { IApiError } from "interfaces/errors";
 import { ITeam } from "interfaces/team";
 
-import teamsAPI, { ILoadTeamsResponse } from "services/entities/teams";
+import teamsAPI, { ILoadTeamResponse } from "services/entities/teams";
 import osqueryOptionsAPI from "services/entities/osquery_options";
 
 // @ts-ignore
 import validateYaml from "components/forms/validators/validate_yaml";
 import Button from "components/buttons/Button";
 import Spinner from "components/Spinner";
+import CustomLink from "components/CustomLink";
 // @ts-ignore
 import YamlAce from "components/YamlAce";
-import ExternalLinkIcon from "../../../../../../assets/images/icon-external-link-12x12@2x.png";
 
 const baseClass = "agent-options";
 
 interface IAgentOptionsPageProps {
-  params: {
-    team_id: string;
+  location: {
+    pathname: string;
+    search: string;
+    hash?: string;
+    query: { team_id?: string };
   };
+  router: InjectedRouter;
 }
 
 const AgentOptionsPage = ({
-  params: { team_id },
+  location,
+  router,
 }: IAgentOptionsPageProps): JSX.Element => {
-  const teamIdFromURL = parseInt(team_id, 10);
   const { renderFlash } = useContext(NotificationContext);
+
+  const { isRouteOk, teamIdForApi } = useTeamIdParam({
+    location,
+    router,
+    includeAllTeams: false,
+    includeNoTeam: false,
+    permittedAccessByTeamRole: {
+      admin: true,
+      maintainer: false,
+      observer: false,
+      observer_plus: false,
+    },
+  });
 
   const [teamName, setTeamName] = useState("");
   const [formData, setFormData] = useState<{ agentOptions?: string }>({});
@@ -47,22 +65,17 @@ const AgentOptionsPage = ({
   const {
     isFetching: isFetchingTeamOptions,
     refetch: refetchTeamOptions,
-  } = useQuery<ILoadTeamsResponse, Error, ITeam[]>(
-    ["teams"],
-    () => teamsAPI.loadAll(),
+  } = useQuery<ILoadTeamResponse, Error, ITeam>(
+    ["team_details", teamIdForApi],
+    () => teamsAPI.load(teamIdForApi),
     {
-      select: (data: ILoadTeamsResponse) => data.teams,
+      enabled: isRouteOk && !!teamIdForApi,
+      select: (data: ILoadTeamResponse) => data.team,
       onSuccess: (data) => {
-        const selected = data.find((team) => team.id === teamIdFromURL);
-
-        if (selected) {
-          setFormData({
-            agentOptions: agentOptionsToYaml(selected.agent_options),
-          });
-          setTeamName(selected.name);
-        } else {
-          handlePageError({ status: 404 });
-        }
+        setFormData({
+          agentOptions: agentOptionsToYaml(data.agent_options),
+        });
+        setTeamName(data.name);
       },
       onError: (error) => handlePageError(error),
     }
@@ -89,8 +102,6 @@ const AgentOptionsPage = ({
   const onFormSubmit = (evt: React.MouseEvent<HTMLFormElement>) => {
     evt.preventDefault();
 
-    const { TEAMS_AGENT_OPTIONS } = endpoints;
-
     setIsUpdatingAgentOptions(true);
 
     // Formatting of API not UI and allows empty agent options
@@ -99,7 +110,7 @@ const AgentOptionsPage = ({
       : EMPTY_AGENT_OPTIONS;
 
     osqueryOptionsAPI
-      .update(formDataToSubmit, TEAMS_AGENT_OPTIONS(teamIdFromURL))
+      .updateTeam(teamIdForApi, formDataToSubmit)
       .then(() => {
         renderFlash(
           "success",
@@ -109,9 +120,24 @@ const AgentOptionsPage = ({
       })
       .catch((response: { data: IApiError }) => {
         console.error(response);
+
+        const agentOptionsInvalid =
+          response.data.errors[0].reason.includes("unsupported key provided") ||
+          response.data.errors[0].reason.includes("invalid value type");
+
         return renderFlash(
           "error",
-          `Could not update ${teamName} team agent options. ${response.data.errors[0].reason}`
+          <>
+            Could not update {teamName} team agent options.{" "}
+            {response.data.errors[0].reason}
+            {agentOptionsInvalid && (
+              <>
+                <br />
+                If you’re not using the latest osquery, use the fleetctl apply
+                --force command to override validation.
+              </>
+            )}
+          </>
         );
       })
       .finally(() => {
@@ -129,17 +155,12 @@ const AgentOptionsPage = ({
         Agent options configure the osquery agent. When you update agent
         options, they will be applied the next time a host checks in to Fleet.
         <br />
-        <a
-          href="https://fleetdm.com/docs/using-fleet/fleet-ui#configuring-agent-options"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn more about agent{" "}
-          <span className="no-wrap">
-            options
-            <img alt="Open external link" src={ExternalLinkIcon} />
-          </span>
-        </a>
+        <CustomLink
+          url="https://fleetdm.com/docs/using-fleet/fleet-ui#configuring-agent-options"
+          text="Learn more about agent options"
+          newTab
+          multiline
+        />
       </p>
       {isFetchingTeamOptions ? (
         <Spinner />

@@ -36,13 +36,13 @@ func TriggerVulnerabilitiesWebhook(
 	targetURL := vulnConfig.DestinationURL
 	batchSize := vulnConfig.HostBatchSize
 
-	groups := make(map[string][]uint)
+	cveGrouped := make(map[string][]uint)
 	for _, v := range args.Vulnerablities {
-		groups[v.CVE] = append(groups[v.CVE], v.SoftwareID)
+		cveGrouped[v.GetCVE()] = append(cveGrouped[v.GetCVE()], v.Affected())
 	}
 
-	for cve, sIDs := range groups {
-		hosts, err := ds.HostsBySoftwareIDs(ctx, sIDs)
+	for cve, sIDs := range cveGrouped {
+		hosts, err := ds.HostVulnSummariesBySoftwareIDs(ctx, sIDs)
 		if err != nil {
 			return ctxerr.Wrap(ctx, err, "get hosts by software ids")
 		}

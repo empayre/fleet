@@ -4,8 +4,7 @@ import { IOsqueryPlatform } from "interfaces/platform";
 import { PLATFORM_DISPLAY_NAMES } from "utilities/constants";
 
 import TooltipWrapper from "components/TooltipWrapper";
-import CompatibleIcon from "../../../assets/images/icon-compatible-green-16x16@2x.png";
-import IncompatibleIcon from "../../../assets/images/icon-incompatible-red-16x16@2x.png";
+import Icon from "components/Icon";
 
 interface IPlatformCompatibilityProps {
   compatiblePlatforms: IOsqueryPlatform[] | null;
@@ -14,7 +13,12 @@ interface IPlatformCompatibilityProps {
 
 const baseClass = "platform-compatibility";
 
-const DISPLAY_ORDER = ["macOS", "Windows", "Linux"] as IOsqueryPlatform[];
+const DISPLAY_ORDER = [
+  "macOS",
+  "Windows",
+  "Linux",
+  "ChromeOS",
+] as IOsqueryPlatform[];
 
 const ERROR_NO_COMPATIBLE_TABLES = Error("no tables in query");
 
@@ -51,7 +55,10 @@ const PlatformCompatibility = ({
     return (
       <span className={baseClass}>
         <b>
-          <TooltipWrapper tipContent="Estimated compatiblity based on <br /> the tables used in the query.">
+          <TooltipWrapper
+            tipContent="Estimated compatiblity based on <br /> the tables used in the query."
+            isDelayed
+          >
             Compatible with:
           </TooltipWrapper>
         </b>
@@ -79,9 +86,12 @@ const PlatformCompatibility = ({
             key={`platform-compatibility__${platform}`}
             className="platform"
           >
-            <img
-              alt={isCompatible ? "compatible" : "incompatible"}
-              src={isCompatible ? CompatibleIcon : IncompatibleIcon}
+            <Icon
+              name={isCompatible ? "check" : "ex"}
+              className={
+                isCompatible ? "compatible-platform" : "incompatible-platform"
+              }
+              color={isCompatible ? "status-success" : "status-error"}
             />
             {platform}
           </span>

@@ -1,5 +1,5 @@
 import React, { useContext, useEffect, useState } from "react";
-import { Link } from "react-router";
+
 import { InjectedRouter } from "react-router/lib/Router";
 import { UseMutateAsyncFunction } from "react-query";
 
@@ -12,8 +12,8 @@ import PATHS from "router/paths";
 import debounce from "utilities/debounce";
 import deepDifference from "utilities/deep_difference";
 
+import BackLink from "components/BackLink";
 import QueryForm from "pages/queries/QueryPage/components/QueryForm";
-import BackChevron from "../../../../../assets/images/icon-chevron-down-9x6@2x.png";
 
 interface IQueryEditorProps {
   router: InjectedRouter;
@@ -49,7 +49,7 @@ const QueryEditor = ({
   onOpenSchemaSidebar,
   renderLiveQueryWarning,
 }: IQueryEditorProps): JSX.Element | null => {
-  const { currentUser } = useContext(AppContext);
+  const { currentUser, filteredQueriesPath } = useContext(AppContext);
   const { renderFlash } = useContext(NotificationContext);
 
   // Note: The QueryContext values should always be used for any mutable query data such as query name
@@ -137,12 +137,16 @@ const QueryEditor = ({
     return null;
   }
 
+  // Function instead of constant eliminates race condition with filteredSoftwarePath
+  const backToQueriesPath = () => {
+    return filteredQueriesPath || PATHS.MANAGE_QUERIES;
+  };
+
   return (
     <div className={`${baseClass}__form`}>
-      <Link to={PATHS.MANAGE_QUERIES} className={`${baseClass}__back-link`}>
-        <img src={BackChevron} alt="back chevron" id="back-chevron" />
-        <span>Back to queries</span>
-      </Link>
+      <div className={`${baseClass}__header-links`}>
+        <BackLink text="Back to queries" path={backToQueriesPath()} />
+      </div>
       <QueryForm
         router={router}
         onCreateQuery={onSaveQueryFormSubmit}

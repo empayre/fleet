@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/fleetdm/fleet/v4/server/contexts/capabilities"
+	"github.com/fleetdm/fleet/v4/server/contexts/license"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/go-kit/kit/endpoint"
 	"github.com/go-kit/kit/log"
@@ -22,7 +23,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-type handlerFunc func(ctx context.Context, request interface{}, svc fleet.Service) (interface{}, error)
+type handlerFunc func(ctx context.Context, request interface{}, svc fleet.Service) (errorer, error)
 
 // parseTag parses a `url` tag and whether it's optional or not, which is an optional part of the tag
 func parseTag(tag string) (string, bool, error) {
@@ -39,8 +40,13 @@ func parseTag(tag string) (string, bool, error) {
 	}
 }
 
+type fieldPair struct {
+	sf reflect.StructField
+	v  reflect.Value
+}
+
 // allFields returns all the fields for a struct, including the ones from embedded structs
-func allFields(ifv reflect.Value) []reflect.StructField {
+func allFields(ifv reflect.Value) []fieldPair {
 	if ifv.Kind() == reflect.Ptr {
 		ifv = ifv.Elem()
 	}
@@ -48,7 +54,7 @@ func allFields(ifv reflect.Value) []reflect.StructField {
 		return nil
 	}
 
-	var fields []reflect.StructField
+	var fields []fieldPair
 
 	if !ifv.IsValid() {
 		return nil
@@ -63,14 +69,24 @@ func allFields(ifv reflect.Value) []reflect.StructField {
 			fields = append(fields, allFields(v)...)
 			continue
 		}
-		fields = append(fields, ifv.Type().Field(i))
+		fields = append(fields, fieldPair{sf: ifv.Type().Field(i), v: v})
 	}
 
 	return fields
 }
 
+// A value that implements requestDecoder takes control of decoding the request
+// as a whole - that is, it is responsible for decoding the body and any url
+// or query argument itself.
 type requestDecoder interface {
 	DecodeRequest(ctx context.Context, r *http.Request) (interface{}, error)
+}
+
+// A value that implements bodyDecoder takes control of decoding the request
+// body. Other fields such as url and query parameters are decoded prior to
+// calling DecodeBody with the request's body as an io.Reader.
+type bodyDecoder interface {
+	DecodeBody(ctx context.Context, r io.Reader) error
 }
 
 // makeDecoder creates a decoder for the type for the struct passed on. If the
@@ -89,6 +105,10 @@ type requestDecoder interface {
 // If iface implements the requestDecoder interface, it returns a function that
 // calls iface.DecodeRequest(ctx, r) - i.e. the value itself fully controls its
 // own decoding.
+//
+// If iface implements the bodyDecoder interface, it calls iface.DecodeBody
+// after having decoded any non-body fields (such as url and query parameters)
+// into the struct.
 func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 	if iface == nil {
 		return func(ctx context.Context, r *http.Request) (interface{}, error) {
@@ -110,31 +130,39 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 		v := reflect.New(t)
 		nilBody := false
 
+		var isBodyDecoder bool
+		if _, ok := v.Interface().(bodyDecoder); ok {
+			isBodyDecoder = true
+		}
+
 		buf := bufio.NewReader(r.Body)
+		var body io.Reader = buf
 		if _, err := buf.Peek(1); err == io.EOF {
 			nilBody = true
 		} else {
-			var body io.Reader = buf
 			if r.Header.Get("content-encoding") == "gzip" {
 				gzr, err := gzip.NewReader(buf)
 				if err != nil {
-					return nil, badRequestErr("gzip decoder error: %w", err)
+					return nil, badRequestErr("gzip decoder error", err)
 				}
 				defer gzr.Close()
 				body = gzr
 			}
 
-			req := v.Interface()
-			if err := json.NewDecoder(body).Decode(req); err != nil {
-				return nil, badRequestErr("json decoder error: %w", err)
+			if !isBodyDecoder {
+				req := v.Interface()
+				if err := json.NewDecoder(body).Decode(req); err != nil {
+					return nil, badRequestErr("json decoder error", err)
+				}
+				v = reflect.ValueOf(req)
 			}
-			v = reflect.ValueOf(req)
 		}
 
-		for _, f := range allFields(v) {
-			field := v.Elem().FieldByName(f.Name)
+		fields := allFields(v)
+		for _, fp := range fields {
+			field := fp.v
 
-			urlTagValue, ok := f.Tag.Lookup("url")
+			urlTagValue, ok := fp.sf.Tag.Lookup("url")
 
 			optional := false
 			var err error
@@ -181,7 +209,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 							if err == errBadRoute && optional {
 								continue
 							}
-							return nil, badRequestErr("intFromRequest: %w", err)
+							return nil, badRequestErr("intFromRequest", err)
 						}
 						field.SetInt(v)
 
@@ -191,7 +219,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 							if err == errBadRoute && optional {
 								continue
 							}
-							return nil, badRequestErr("uintFromRequest: %w", err)
+							return nil, badRequestErr("uintFromRequest", err)
 						}
 						field.SetUint(v)
 
@@ -201,7 +229,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 							if err == errBadRoute && optional {
 								continue
 							}
-							return nil, badRequestErr("stringFromRequest: %w", err)
+							return nil, badRequestErr("stringFromRequest", err)
 						}
 						field.SetString(v)
 
@@ -211,12 +239,12 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 				}
 			}
 
-			_, jsonExpected := f.Tag.Lookup("json")
+			_, jsonExpected := fp.sf.Tag.Lookup("json")
 			if jsonExpected && nilBody {
 				return nil, badRequest("Expected JSON Body")
 			}
 
-			queryTagValue, ok := f.Tag.Lookup("query")
+			queryTagValue, ok := fp.sf.Tag.Lookup("query")
 
 			if ok {
 				queryTagValue, optional, err = parseTag(queryTagValue)
@@ -229,7 +257,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 					if optional {
 						continue
 					}
-					return nil, badRequest(fmt.Sprintf("Param %s is required", f.Name))
+					return nil, badRequest(fmt.Sprintf("Param %s is required", fp.sf.Name))
 				}
 				if field.Kind() == reflect.Ptr {
 					// create the new instance of whatever it is
@@ -242,7 +270,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 				case reflect.Uint:
 					queryValUint, err := strconv.Atoi(queryVal)
 					if err != nil {
-						return nil, badRequestErr("parsing uint from query: %w", err)
+						return nil, badRequestErr("parsing uint from query", err)
 					}
 					field.SetUint(uint64(queryValUint))
 				case reflect.Bool:
@@ -264,12 +292,37 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 					default:
 						queryValInt, err = strconv.Atoi(queryVal)
 						if err != nil {
-							return nil, badRequestErr("parsing int from query: %w", err)
+							return nil, badRequestErr("parsing int from query", err)
 						}
 					}
 					field.SetInt(int64(queryValInt))
 				default:
-					return nil, fmt.Errorf("Cant handle type for field %s %s", f.Name, field.Kind())
+					return nil, fmt.Errorf("Cant handle type for field %s %s", fp.sf.Name, field.Kind())
+				}
+			}
+		}
+
+		if isBodyDecoder {
+			bd := v.Interface().(bodyDecoder)
+			if err := bd.DecodeBody(ctx, body); err != nil {
+				return nil, err
+			}
+		}
+
+		if !license.IsPremium(ctx) {
+			for _, fp := range fields {
+				if prem, ok := fp.sf.Tag.Lookup("premium"); ok {
+					val, err := strconv.ParseBool(prem)
+					if err != nil {
+						return nil, err
+					}
+					if val && !fp.v.IsZero() {
+						return nil, &fleet.BadRequestError{Message: fmt.Sprintf(
+							"option %s requires a premium license",
+							fp.sf.Name,
+						)}
+					}
+					continue
 				}
 			}
 		}
@@ -282,13 +335,16 @@ func badRequest(msg string) error {
 	return &fleet.BadRequestError{Message: msg}
 }
 
-func badRequestErr(msg string, err error) error {
+func badRequestErr(publicMsg string, internalErr error) error {
 	// ensure timeout errors don't become BadRequestErrors.
 	var opErr *net.OpError
-	if errors.As(err, &opErr) {
-		return fmt.Errorf(msg, err)
+	if errors.As(internalErr, &opErr) {
+		return fmt.Errorf(publicMsg+", internal: %w", internalErr)
 	}
-	return &fleet.BadRequestError{Message: fmt.Errorf(msg, err).Error()}
+	return &fleet.BadRequestError{
+		Message:     publicMsg,
+		InternalErr: internalErr,
+	}
 }
 
 type authEndpointer struct {

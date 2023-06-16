@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
 	"github.com/fleetdm/fleet/v4/server/fleet"
@@ -37,16 +38,31 @@ type Job interface {
 // failingPolicyArgs are the args common to all integrations that can process
 // failing policies.
 type failingPolicyArgs struct {
-	PolicyID   uint                  `json:"policy_id"`
-	PolicyName string                `json:"policy_name"`
-	Hosts      []fleet.PolicySetHost `json:"hosts"`
-	TeamID     *uint                 `json:"team_id,omitempty"`
+	PolicyID       uint                  `json:"policy_id"`
+	PolicyName     string                `json:"policy_name"`
+	PolicyCritical bool                  `json:"policy_critical"`
+	Hosts          []fleet.PolicySetHost `json:"hosts"`
+	TeamID         *uint                 `json:"team_id,omitempty"`
+}
+
+// vulnArgs are the args common to all integrations that can process
+// vulnerabilities.
+type vulnArgs struct {
+	CVE                 string     `json:"cve,omitempty"`
+	AffectedSoftwareIDs []uint     `json:"affected_software,omitempty"`
+	EPSSProbability     *float64   `json:"epss_probability,omitempty"`   // Premium feature only
+	CVSSScore           *float64   `json:"cvss_score,omitempty"`         // Premium feature only
+	CISAKnownExploit    *bool      `json:"cisa_known_exploit,omitempty"` // Premium feature only
+	CVEPublished        *time.Time `json:"cve_published,omitempty"`      // Premium feature only
 }
 
 // Worker runs jobs. NOT SAFE FOR CONCURRENT USE.
 type Worker struct {
 	ds  fleet.Datastore
 	log kitlog.Logger
+
+	// For tests only, allows ignoring unknown jobs instead of failing them.
+	TestIgnoreUnknownJobs bool
 
 	registry map[string]Job
 }
@@ -84,6 +100,19 @@ func QueueJob(ctx context.Context, ds fleet.Datastore, name string, args interfa
 	}
 
 	return ds.NewJob(ctx, job)
+}
+
+// this defines the delays to add between retries (i.e. how the "not_before"
+// timestamp of a job will be set for the next run). Keep in mind that at a
+// minimum, the job will not be retried before the next cron run of the worker,
+// but we want to ensure a minimum delay before retries to give a chance to
+// e.g. transient network issues to resolve themselves.
+var delayPerRetry = []time.Duration{
+	1: 0, // i.e. for the first retry, do it ASAP (on the next worker run)
+	2: 5 * time.Minute,
+	3: 10 * time.Minute,
+	4: 1 * time.Hour,
+	5: 2 * time.Hour,
 }
 
 // ProcessJobs processes all queued jobs.
@@ -125,6 +154,9 @@ func (w *Worker) ProcessJobs(ctx context.Context) error {
 				if job.Retries < maxRetries {
 					level.Debug(log).Log("msg", "will retry job")
 					job.Retries += 1
+					if job.Retries < len(delayPerRetry) {
+						job.NotBefore = time.Now().Add(delayPerRetry[job.Retries])
+					}
 				} else {
 					job.State = fleet.JobStateFailure
 				}
@@ -148,6 +180,9 @@ func (w *Worker) ProcessJobs(ctx context.Context) error {
 func (w *Worker) processJob(ctx context.Context, job *fleet.Job) error {
 	j, ok := w.registry[job.Name]
 	if !ok {
+		if w.TestIgnoreUnknownJobs {
+			return nil
+		}
 		return ctxerr.Errorf(ctx, "unknown job: %s", job.Name)
 	}
 
@@ -157,4 +192,24 @@ func (w *Worker) processJob(ctx context.Context, job *fleet.Job) error {
 	}
 
 	return j.Run(ctx, args)
+}
+
+type failingPoliciesTplArgs struct {
+	FleetURL       string
+	PolicyID       uint
+	PolicyName     string
+	PolicyCritical bool
+	TeamID         *uint
+	Hosts          []fleet.PolicySetHost
+}
+
+func newFailingPoliciesTplArgs(fleetURL string, args *failingPolicyArgs) *failingPoliciesTplArgs {
+	return &failingPoliciesTplArgs{
+		FleetURL:       fleetURL,
+		PolicyName:     args.PolicyName,
+		PolicyID:       args.PolicyID,
+		PolicyCritical: args.PolicyCritical,
+		TeamID:         args.TeamID,
+		Hosts:          args.Hosts,
+	}
 }

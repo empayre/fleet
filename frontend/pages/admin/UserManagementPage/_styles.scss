@@ -1,17 +1,16 @@
 .user-management {
-
   &__page-description {
     font-size: $x-small;
     color: $core-fleet-black;
     @include sticky-settings-description;
+    padding-bottom: $pad-medium;
   }
 
   &__sandbox-demo-message {
     margin-top: 3.5rem;
   }
 
-  .Select-menu-outer {
-    position: absolute;
-    left: -50px !important; // Using !important to override react select styling
+  &__api-only-user {
+    @include grey-badge;
   }
 }

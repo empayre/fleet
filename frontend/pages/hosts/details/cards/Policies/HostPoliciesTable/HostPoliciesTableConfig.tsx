@@ -1,24 +1,24 @@
 import React from "react";
-import { Link } from "react-router";
-import PATHS from "router/paths";
-import StatusCell from "components/TableContainer/DataTable/StatusCell";
+import StatusIndicatorWithIcon from "components/StatusIndicatorWithIcon";
 import Button from "components/buttons/Button";
 import { IHostPolicy } from "interfaces/policy";
-import { PolicyResponse } from "utilities/constants";
-
-import Chevron from "../../../../../../../assets/images/icon-chevron-right-9x6@2x.png";
-
-const TAGGED_TEMPLATES = {
-  hostsByPolicyRoute: (policyId: number, policyResponse: PolicyResponse) => {
-    return `?policy_id=${policyId}&policy_response=${policyResponse}`;
-  },
-};
+import { PolicyResponse, DEFAULT_EMPTY_CELL_VALUE } from "utilities/constants";
+import ViewAllHostsLink from "components/ViewAllHostsLink";
+import { IndicatorStatus } from "components/StatusIndicatorWithIcon/StatusIndicatorWithIcon";
 
 interface IHeaderProps {
   column: {
     title: string;
     isSortedDesc: boolean;
   };
+}
+
+type PolicyStatus = "pass" | "fail";
+
+interface IStatusCellValue {
+  displayName: string;
+  statusName: IndicatorStatus;
+  value: PolicyStatus;
 }
 interface ICellProps {
   cell: {
@@ -39,20 +39,24 @@ interface IDataColumn {
   sortType?: string;
 }
 
-const getPolicyStatus = (policy: IHostPolicy): string => {
-  if (policy.response === "pass") {
-    return "Yes";
-  } else if (policy.response === "fail") {
-    return "No";
-  }
-  return "---";
-};
-
 // NOTE: cellProps come from react-table
 // more info here https://react-table.tanstack.com/docs/api/useTable#cell-properties
 const generatePolicyTableHeaders = (
-  togglePolicyDetails: (policy: IHostPolicy) => void
+  togglePolicyDetails: (policy: IHostPolicy, teamId?: number) => void
 ): IDataColumn[] => {
+  const STATUS_CELL_VALUES: Record<PolicyStatus, IStatusCellValue> = {
+    pass: {
+      displayName: "Yes",
+      statusName: "success",
+      value: "pass",
+    },
+    fail: {
+      displayName: "No",
+      statusName: "error",
+      value: "fail",
+    },
+  };
+
   return [
     {
       title: "Name",
@@ -80,7 +84,18 @@ const generatePolicyTableHeaders = (
       accessor: "response",
       disableSortBy: true,
       Cell: (cellProps) => {
-        return <StatusCell value={getPolicyStatus(cellProps.row.original)} />;
+        if (cellProps.row.original.response === "") {
+          return <>{DEFAULT_EMPTY_CELL_VALUE}</>;
+        }
+
+        const responseValue =
+          STATUS_CELL_VALUES[cellProps.row.original.response];
+        return (
+          <StatusIndicatorWithIcon
+            value={responseValue.displayName}
+            status={responseValue.statusName}
+          />
+        );
       },
     },
     {
@@ -92,21 +107,16 @@ const generatePolicyTableHeaders = (
         return (
           <>
             {cellProps.row.original.response && (
-              <Link
-                to={
-                  PATHS.MANAGE_HOSTS +
-                  TAGGED_TEMPLATES.hostsByPolicyRoute(
-                    cellProps.row.original.id,
+              <ViewAllHostsLink
+                queryParams={{
+                  policy_id: cellProps.row.original.id,
+                  policy_response:
                     cellProps.row.original.response === "pass"
                       ? PolicyResponse.PASSING
-                      : PolicyResponse.FAILING
-                  )
-                }
-                className={`policy-link`}
-              >
-                View all hosts{" "}
-                <img alt="link to hosts filtered by policy ID" src={Chevron} />
-              </Link>
+                      : PolicyResponse.FAILING,
+                }}
+                className="policy-link"
+              />
             )}
           </>
         );

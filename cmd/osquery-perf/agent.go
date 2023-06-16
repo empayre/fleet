@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
@@ -24,7 +23,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/fleetdm/fleet/v4/pkg/mdm/mdmtest"
 	"github.com/fleetdm/fleet/v4/server/fleet"
+	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
 	"github.com/fleetdm/fleet/v4/server/ptr"
 	"github.com/fleetdm/fleet/v4/server/service"
 	"github.com/google/uuid"
@@ -61,20 +62,71 @@ func init() {
 }
 
 type Stats struct {
-	errors            int
-	enrollments       int
-	distributedwrites int
+	errors              int
+	osqueryEnrollments  int
+	orbitEnrollments    int
+	mdmEnrollments      int
+	distributedWrites   int
+	mdmCommandsReceived int
+	orbitErrors         int
+	mdmErrors           int
+	desktopErrors       int
 
 	l sync.Mutex
 }
 
-func (s *Stats) RecordStats(errors int, enrollments int, distributedwrites int) {
+func (s *Stats) IncrementErrors(errors int) {
 	s.l.Lock()
 	defer s.l.Unlock()
-
 	s.errors += errors
-	s.enrollments += enrollments
-	s.distributedwrites += distributedwrites
+}
+
+func (s *Stats) IncrementEnrollments() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.osqueryEnrollments++
+}
+
+func (s *Stats) IncrementOrbitEnrollments() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.orbitEnrollments++
+}
+
+func (s *Stats) IncrementMDMEnrollments() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.mdmEnrollments++
+}
+
+func (s *Stats) IncrementDistributedWrites() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.distributedWrites++
+}
+
+func (s *Stats) IncrementMDMCommandsReceived() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.mdmCommandsReceived++
+}
+
+func (s *Stats) IncrementOrbitErrors() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.orbitErrors++
+}
+
+func (s *Stats) IncrementMDMErrors() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.mdmErrors++
+}
+
+func (s *Stats) IncrementDesktopErrors() {
+	s.l.Lock()
+	defer s.l.Unlock()
+	s.desktopErrors++
 }
 
 func (s *Stats) Log() {
@@ -82,11 +134,17 @@ func (s *Stats) Log() {
 	defer s.l.Unlock()
 
 	fmt.Printf(
-		"%s :: error rate: %.2f \t enrollments: %d \t writes: %d\n",
-		time.Now().String(),
-		float64(s.errors)/float64(s.enrollments),
-		s.enrollments,
-		s.distributedwrites,
+		"%s :: error rate: %.2f, osquery enrolls: %d, orbit enrolls: %d, mdm enrolls: %d, distributed/writes: %d, mdm commands received: %d, orbit errors: %d, desktop errors: %d, mdm errors: %d\n",
+		time.Now().Format("2006-01-02T15:04:05Z"),
+		float64(s.errors)/float64(s.osqueryEnrollments),
+		s.osqueryEnrollments,
+		s.orbitEnrollments,
+		s.mdmEnrollments,
+		s.distributedWrites,
+		s.mdmCommandsReceived,
+		s.orbitErrors,
+		s.desktopErrors,
+		s.mdmErrors,
 	)
 }
 
@@ -153,34 +211,49 @@ func (n *nodeKeyManager) Add(nodekey string) {
 }
 
 type agent struct {
-	agentIndex      int
-	softwareCount   softwareEntityCount
-	userCount       entityCount
-	policyPassProb  float64
-	munkiIssueProb  float64
-	munkiIssueCount int
-	strings         map[string]string
-	serverAddress   string
-	fastClient      fasthttp.Client
-	stats           *Stats
-	nodeKeyManager  *nodeKeyManager
-	nodeKey         string
-	templates       *template.Template
-	os              string
+	agentIndex             int
+	softwareCount          softwareEntityCount
+	userCount              entityCount
+	policyPassProb         float64
+	munkiIssueProb         float64
+	munkiIssueCount        int
+	liveQueryFailProb      float64
+	liveQueryNoResultsProb float64
+	strings                map[string]string
+	serverAddress          string
+	fastClient             fasthttp.Client
+	stats                  *Stats
+	nodeKeyManager         *nodeKeyManager
+	nodeKey                string
+	templates              *template.Template
+	os                     string
 	// deviceAuthToken holds Fleet Desktop device authentication token.
 	//
 	// Non-nil means the agent is identified as orbit osquery,
 	// nil means the agent is identified as vanilla osquery.
 	deviceAuthToken *string
+	orbitNodeKey    *string
 
 	scheduledQueries []string
 
-	// The following are exported to be used by the templates.
+	// mdmClient simulates a device running the MDM protocol (client side).
+	mdmClient *mdmtest.TestMDMClient
+	// isEnrolledToMDM is true when the mdmDevice has enrolled.
+	isEnrolledToMDM bool
+	// isEnrolledToMDMMu protects isEnrolledToMDM.
+	isEnrolledToMDMMu sync.Mutex
 
-	EnrollSecret   string
-	UUID           string
-	ConfigInterval time.Duration
-	QueryInterval  time.Duration
+	//
+	// The following are exported to be used by the templates.
+	//
+
+	EnrollSecret          string
+	UUID                  string
+	SerialNumber          string
+	ConfigInterval        time.Duration
+	QueryInterval         time.Duration
+	MDMCheckInInterval    time.Duration
+	DiskEncryptionEnabled bool
 }
 
 type entityCount struct {
@@ -190,18 +263,30 @@ type entityCount struct {
 
 type softwareEntityCount struct {
 	entityCount
-	vulnerable     int
-	withLastOpened int
-	lastOpenedProb float64
+	vulnerable                   int
+	withLastOpened               int
+	lastOpenedProb               float64
+	commonSoftwareUninstallCount int
+	commonSoftwareUninstallProb  float64
+	uniqueSoftwareUninstallCount int
+	uniqueSoftwareUninstallProb  float64
 }
 
 func newAgent(
 	agentIndex int,
-	serverAddress, enrollSecret string, templates *template.Template,
-	configInterval, queryInterval time.Duration, softwareCount softwareEntityCount, userCount entityCount,
+	serverAddress, enrollSecret string,
+	templates *template.Template,
+	configInterval, queryInterval, mdmCheckInInterval time.Duration,
+	softwareCount softwareEntityCount,
+	userCount entityCount,
 	policyPassProb float64,
 	orbitProb float64,
 	munkiIssueProb float64, munkiIssueCount int,
+	emptySerialProb float64,
+	mdmProb float64,
+	mdmSCEPChallenge string,
+	liveQueryFailProb float64,
+	liveQueryNoResultsProb float64,
 ) *agent {
 	var deviceAuthToken *string
 	if rand.Float64() <= orbitProb {
@@ -211,15 +296,33 @@ func newAgent(
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
+	serialNumber := mdmtest.RandSerialNumber()
+	if rand.Float64() <= emptySerialProb {
+		serialNumber = ""
+	}
+	uuid := strings.ToUpper(uuid.New().String())
+	var mdmClient *mdmtest.TestMDMClient
+	if rand.Float64() <= mdmProb {
+		mdmClient = mdmtest.NewTestMDMClientDirect(mdmtest.EnrollInfo{
+			SCEPChallenge: mdmSCEPChallenge,
+			SCEPURL:       serverAddress + apple_mdm.SCEPPath,
+			MDMURL:        serverAddress + apple_mdm.MDMPath,
+		})
+		// Have the osquery agent match the MDM device serial number and UUID.
+		serialNumber = mdmClient.SerialNumber
+		uuid = mdmClient.UUID
+	}
 	return &agent{
-		agentIndex:      agentIndex,
-		serverAddress:   serverAddress,
-		softwareCount:   softwareCount,
-		userCount:       userCount,
-		strings:         make(map[string]string),
-		policyPassProb:  policyPassProb,
-		munkiIssueProb:  munkiIssueProb,
-		munkiIssueCount: munkiIssueCount,
+		agentIndex:             agentIndex,
+		serverAddress:          serverAddress,
+		softwareCount:          softwareCount,
+		userCount:              userCount,
+		strings:                make(map[string]string),
+		policyPassProb:         policyPassProb,
+		munkiIssueProb:         munkiIssueProb,
+		munkiIssueCount:        munkiIssueCount,
+		liveQueryFailProb:      liveQueryFailProb,
+		liveQueryNoResultsProb: liveQueryNoResultsProb,
 		fastClient: fasthttp.Client{
 			TLSConfig: tlsConfig,
 		},
@@ -227,10 +330,14 @@ func newAgent(
 		deviceAuthToken: deviceAuthToken,
 		os:              strings.TrimRight(templates.Name(), ".tmpl"),
 
-		EnrollSecret:   enrollSecret,
-		ConfigInterval: configInterval,
-		QueryInterval:  queryInterval,
-		UUID:           uuid.New().String(),
+		EnrollSecret:       enrollSecret,
+		ConfigInterval:     configInterval,
+		QueryInterval:      queryInterval,
+		MDMCheckInInterval: mdmCheckInInterval,
+		UUID:               uuid,
+		SerialNumber:       serialNumber,
+
+		mdmClient: mdmClient,
 	}
 }
 
@@ -242,7 +349,17 @@ type distributedReadResponse struct {
 	Queries map[string]string `json:"queries"`
 }
 
+func (a *agent) isOrbit() bool {
+	return a.deviceAuthToken != nil
+}
+
 func (a *agent) runLoop(i int, onlyAlreadyEnrolled bool) {
+	if a.isOrbit() {
+		if err := a.orbitEnroll(); err != nil {
+			return
+		}
+	}
+
 	if err := a.enroll(i, onlyAlreadyEnrolled); err != nil {
 		return
 	}
@@ -255,6 +372,21 @@ func (a *agent) runLoop(i int, onlyAlreadyEnrolled bool) {
 		if len(resp.Queries) > 0 {
 			a.DistributedWrite(resp.Queries)
 		}
+	}
+
+	if a.isOrbit() {
+		go a.runOrbitLoop()
+	}
+
+	if a.mdmClient != nil {
+		if err := a.mdmClient.Enroll(); err != nil {
+			log.Printf("MDM enroll failed: %s\n", err)
+			a.stats.IncrementMDMErrors()
+			return
+		}
+		a.setMDMEnrolled()
+		a.stats.IncrementMDMEnrollments()
+		go a.runMDMLoop()
 	}
 
 	configTicker := time.Tick(a.ConfigInterval)
@@ -274,20 +406,213 @@ func (a *agent) runLoop(i int, onlyAlreadyEnrolled bool) {
 	}
 }
 
+func (a *agent) runOrbitLoop() {
+	orbitClient, err := service.NewOrbitClient(
+		"",
+		a.serverAddress,
+		"",
+		true,
+		a.EnrollSecret,
+		nil,
+		fleet.OrbitHostInfo{
+			HardwareUUID:   a.UUID,
+			HardwareSerial: a.SerialNumber,
+			Hostname:       a.CachedString("hostname"),
+		},
+	)
+	if err != nil {
+		log.Println("creating orbit client: ", err)
+	}
+
+	orbitClient.TestNodeKey = *a.orbitNodeKey
+
+	deviceClient, err := service.NewDeviceClient(a.serverAddress, true, "", nil, "")
+	if err != nil {
+		log.Println("creating device client: ", err)
+	}
+
+	// orbit does a config check when it starts
+	if _, err := orbitClient.GetConfig(); err != nil {
+		a.stats.IncrementOrbitErrors()
+		log.Println("orbitClient.GetConfig: ", err)
+	}
+
+	tokenRotationEnabled := orbitClient.GetServerCapabilities().Has(fleet.CapabilityOrbitEndpoints) &&
+		orbitClient.GetServerCapabilities().Has(fleet.CapabilityTokenRotation)
+
+	// it also writes and checks the device token
+	if tokenRotationEnabled {
+		if err := orbitClient.SetOrUpdateDeviceToken(*a.deviceAuthToken); err != nil {
+			a.stats.IncrementOrbitErrors()
+			log.Println("orbitClient.SetOrUpdateDeviceToken: ", err)
+		}
+
+		if err := deviceClient.CheckToken(*a.deviceAuthToken); err != nil {
+			a.stats.IncrementOrbitErrors()
+			log.Println("deviceClient.CheckToken: ", err)
+		}
+	}
+
+	// checkToken is used to simulate Fleet Desktop polling until a token is
+	// valid, we make a random number of requests to properly emulate what
+	// happens in the real world as there are delays that are not accounted by
+	// the way this simulation is arranged.
+	checkToken := func() {
+		min := 1
+		max := 5
+		numberOfRequests := rand.Intn(max-min+1) + min
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			<-ticker.C
+			numberOfRequests--
+			if err := deviceClient.CheckToken(*a.deviceAuthToken); err != nil {
+				log.Println("deviceClient.CheckToken: ", err)
+			}
+			if numberOfRequests == 0 {
+				break
+			}
+		}
+	}
+
+	// fleet desktop performs a burst of check token requests when it's initialized
+	checkToken()
+
+	// orbit makes a call to check the config and update the CLI flags every 5
+	// seconds
+	orbitConfigTicker := time.Tick(30 * time.Second)
+	// orbit makes a call every 5 minutes to check the validity of the device
+	// token on the server
+	orbitTokenRemoteCheckTicker := time.Tick(5 * time.Minute)
+	// orbit pings the server every 1 hour to rotate the device token
+	orbitTokenRotationTicker := time.Tick(1 * time.Hour)
+	// orbit polls the /orbit/ping endpoint every 5 minutes to check if the
+	// server capabilities have changed
+	capabilitiesCheckerTicker := time.Tick(5 * time.Minute)
+	// fleet desktop polls for policy compliance every 5 minutes
+	fleetDesktopPolicyTicker := time.Tick(5 * time.Minute)
+
+	for {
+		select {
+		case <-orbitConfigTicker:
+			if _, err := orbitClient.GetConfig(); err != nil {
+				a.stats.IncrementOrbitErrors()
+				log.Println("orbitClient.GetConfig: ", err)
+			}
+		case <-orbitTokenRemoteCheckTicker:
+			if tokenRotationEnabled {
+				if err := deviceClient.CheckToken(*a.deviceAuthToken); err != nil {
+					a.stats.IncrementOrbitErrors()
+					log.Println("deviceClient.CheckToken: ", err)
+				}
+			}
+		case <-orbitTokenRotationTicker:
+			if tokenRotationEnabled {
+				newToken := ptr.String(uuid.NewString())
+				if err := orbitClient.SetOrUpdateDeviceToken(*newToken); err != nil {
+					a.stats.IncrementOrbitErrors()
+					log.Println("orbitClient.SetOrUpdateDeviceToken: ", err)
+				}
+				a.deviceAuthToken = newToken
+				// fleet desktop performs a burst of check token requests after a token is rotated
+				checkToken()
+			}
+		case <-capabilitiesCheckerTicker:
+			if err := orbitClient.Ping(); err != nil {
+				a.stats.IncrementOrbitErrors()
+				log.Println("orbitClient.Ping: ", err)
+			}
+		case <-fleetDesktopPolicyTicker:
+			if _, err := deviceClient.DesktopSummary(*a.deviceAuthToken); err != nil {
+				a.stats.IncrementDesktopErrors()
+				log.Println("deviceClient.NumberOfFailingPolicies: ", err)
+			}
+		}
+	}
+}
+
+func (a *agent) runMDMLoop() {
+	mdmCheckInTicker := time.Tick(a.MDMCheckInInterval)
+
+	for range mdmCheckInTicker {
+		mdmCommandPayload, err := a.mdmClient.Idle()
+		if err != nil {
+			log.Printf("MDM Idle request failed: %s\n", err)
+			a.stats.IncrementMDMErrors()
+			continue
+		}
+	INNER_FOR_LOOP:
+		for mdmCommandPayload != nil {
+			a.stats.IncrementMDMCommandsReceived()
+			mdmCommandPayload, err = a.mdmClient.Acknowledge(mdmCommandPayload.CommandUUID)
+			if err != nil {
+				log.Printf("MDM Acknowledge request failed: %s\n", err)
+				a.stats.IncrementMDMErrors()
+				break INNER_FOR_LOOP
+			}
+		}
+	}
+}
+
 func (a *agent) waitingDo(req *fasthttp.Request, res *fasthttp.Response) {
 	err := a.fastClient.Do(req, res)
 	for err != nil || res.StatusCode() != http.StatusOK {
 		fmt.Println(err, res.StatusCode())
-		a.stats.RecordStats(1, 0, 0)
+		a.stats.IncrementErrors(1)
 		<-time.Tick(time.Duration(rand.Intn(120)+1) * time.Second)
 		err = a.fastClient.Do(req, res)
 	}
 }
 
+// TODO: add support to `alreadyEnrolled` akin to the `enroll` function.  for
+// now, we assume that the agent is not already enrolled, if you kill the agent
+// process then those Orbit node keys are gone.
+func (a *agent) orbitEnroll() error {
+	params := service.EnrollOrbitRequest{
+		EnrollSecret:   a.EnrollSecret,
+		HardwareUUID:   a.UUID,
+		HardwareSerial: a.SerialNumber,
+	}
+
+	jsonBytes, err := json.Marshal(params)
+	if err != nil {
+		log.Println("orbit json marshall:", err)
+		return err
+	}
+
+	req := fasthttp.AcquireRequest()
+	req.SetBody(jsonBytes)
+	req.Header.SetMethod("POST")
+	req.Header.SetContentType("application/json")
+	req.Header.SetRequestURI(a.serverAddress + "/api/fleet/orbit/enroll")
+	resp := fasthttp.AcquireResponse()
+
+	a.waitingDo(req, resp)
+
+	fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	if resp.StatusCode() != http.StatusOK {
+		log.Println("orbit enroll status:", resp.StatusCode())
+		return fmt.Errorf("status code: %d", resp.StatusCode())
+	}
+
+	var parsedResp service.EnrollOrbitResponse
+	if err := json.Unmarshal(resp.Body(), &parsedResp); err != nil {
+		log.Println("orbit json parse:", err)
+		return err
+	}
+
+	a.orbitNodeKey = &parsedResp.OrbitNodeKey
+	a.stats.IncrementOrbitEnrollments()
+	return nil
+}
+
 func (a *agent) enroll(i int, onlyAlreadyEnrolled bool) error {
 	a.nodeKey = a.nodeKeyManager.Get(i)
 	if a.nodeKey != "" {
-		a.stats.RecordStats(0, 1, 0)
+		a.stats.IncrementEnrollments()
 		return nil
 	}
 
@@ -326,7 +651,7 @@ func (a *agent) enroll(i int, onlyAlreadyEnrolled bool) error {
 	}
 
 	a.nodeKey = parsedResp.NodeKey
-	a.stats.RecordStats(0, 1, 0)
+	a.stats.IncrementEnrollments()
 
 	a.nodeKeyManager.Add(a.nodeKey)
 
@@ -371,8 +696,6 @@ func (a *agent) config() {
 		}
 	}
 	a.scheduledQueries = scheduledQueries
-
-	// No need to read the config body
 }
 
 const stringVals = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
@@ -395,7 +718,7 @@ func (a *agent) CachedString(key string) string {
 	return val
 }
 
-func (a *agent) hostUsersMacOS() []map[string]string {
+func (a *agent) hostUsers() []map[string]string {
 	groupNames := []string{"staff", "nobody", "wheel", "tty", "daemon"}
 	shells := []string{"/bin/zsh", "/bin/sh", "/usr/bin/false", "/bin/bash"}
 	commonUsers := make([]map[string]string, a.userCount.common)
@@ -465,7 +788,7 @@ func loadSoftware(platform string, ver string) []map[string]string {
 		fmt.Sprintf("%s_%s-software.json.bz2", platform, ver),
 	)
 
-	tmpDir, err := ioutil.TempDir("", "osquery-perf")
+	tmpDir, err := os.MkdirTemp("", "osquery-perf")
 	if err != nil {
 		panic(err)
 	}
@@ -482,7 +805,7 @@ func loadSoftware(platform string, ver string) []map[string]string {
 	}
 
 	var software []softwareJSON
-	contents, err := ioutil.ReadFile(dstPath)
+	contents, err := os.ReadFile(dstPath)
 	if err != nil {
 		log.Printf("reading vuln software for %s %s: %s\n", platform, ver, err)
 		return nil
@@ -495,11 +818,16 @@ func loadSoftware(platform string, ver string) []map[string]string {
 	}
 
 	var r []map[string]string
-	for _, fi := range software {
+	for i, fi := range software {
+		installedPath := ""
+		if i%2 == 0 {
+			installedPath = fmt.Sprintf("/some/path/%s", fi.Name)
+		}
 		r = append(r, map[string]string{
-			"name":    fi.Name,
-			"version": fi.Version,
-			"source":  "osquery-perf",
+			"name":           fi.Name,
+			"version":        fi.Version,
+			"source":         "osquery-perf",
+			"installed_path": installedPath,
 		})
 	}
 	return r
@@ -507,26 +835,6 @@ func loadSoftware(platform string, ver string) []map[string]string {
 
 func (a *agent) softwareWindows11() []map[string]string {
 	return loadSoftware("windows", "11")
-}
-
-func (a *agent) softwareUbuntu1604() []map[string]string {
-	return loadSoftware("ubuntu", "1604")
-}
-
-func (a *agent) softwareUbuntu1804() []map[string]string {
-	return loadSoftware("ubuntu", "1804")
-}
-
-func (a *agent) softwareUbuntu2004() []map[string]string {
-	return loadSoftware("ubuntu", "2004")
-}
-
-func (a *agent) softwareUbuntu2104() []map[string]string {
-	return loadSoftware("ubuntu", "2104")
-}
-
-func (a *agent) softwareUbuntu2110() []map[string]string {
-	return loadSoftware("ubuntu", "2110")
 }
 
 func (a *agent) softwareUbuntu2204() []map[string]string {
@@ -547,7 +855,14 @@ func (a *agent) softwareMacOS() []map[string]string {
 			"bundle_identifier": "com.fleetdm.osquery-perf",
 			"source":            "osquery-perf",
 			"last_opened_at":    lastOpenedAt,
+			"installed_path":    fmt.Sprintf("/some/path/Common_%d", i),
 		}
+	}
+	if a.softwareCount.commonSoftwareUninstallProb > 0.0 && rand.Float64() <= a.softwareCount.commonSoftwareUninstallProb {
+		rand.Shuffle(len(commonSoftware), func(i, j int) {
+			commonSoftware[i], commonSoftware[j] = commonSoftware[j], commonSoftware[i]
+		})
+		commonSoftware = commonSoftware[:a.softwareCount.common-a.softwareCount.commonSoftwareUninstallCount]
 	}
 	uniqueSoftware := make([]map[string]string, a.softwareCount.unique)
 	for i := 0; i < len(uniqueSoftware); i++ {
@@ -561,7 +876,14 @@ func (a *agent) softwareMacOS() []map[string]string {
 			"bundle_identifier": "com.fleetdm.osquery-perf",
 			"source":            "osquery-perf",
 			"last_opened_at":    lastOpenedAt,
+			"installed_path":    fmt.Sprintf("/some/path/Unique_%s_%d", a.CachedString("hostname"), i),
 		}
+	}
+	if a.softwareCount.uniqueSoftwareUninstallProb > 0.0 && rand.Float64() <= a.softwareCount.uniqueSoftwareUninstallProb {
+		rand.Shuffle(len(uniqueSoftware), func(i, j int) {
+			uniqueSoftware[i], uniqueSoftware[j] = uniqueSoftware[j], uniqueSoftware[i]
+		})
+		uniqueSoftware = uniqueSoftware[:a.softwareCount.unique-a.softwareCount.uniqueSoftwareUninstallCount]
 	}
 	randomVulnerableSoftware := make([]map[string]string, a.softwareCount.vulnerable)
 	for i := 0; i < len(randomVulnerableSoftware); i++ {
@@ -576,6 +898,7 @@ func (a *agent) softwareMacOS() []map[string]string {
 			"bundle_identifier": sw.BundleIdentifier,
 			"source":            sw.Source,
 			"last_opened_at":    lastOpenedAt,
+			"installed_path":    fmt.Sprintf("/some/path/%s", sw.Name),
 		}
 	}
 	software := append(commonSoftware, uniqueSoftware...)
@@ -654,34 +977,74 @@ func (a *agent) randomQueryStats() []map[string]string {
 	return stats
 }
 
-func (a *agent) mdm() []map[string]string {
-	possibleURLs := []string{
-		"https://kandji.com/1",
-		"https://jamf.com/1",
-		"https://airwatch.com/1",
-		"https://microsoft.com/1",
-		"https://simplemdm.com/1",
-		"https://example.com/1",
-		"https://kandji.com/2",
-		"https://jamf.com/2",
-		"https://airwatch.com/2",
-		"https://microsoft.com/2",
-		"https://simplemdm.com/2",
-		"https://example.com/2",
+var possibleMDMServerURLs = []string{
+	"https://kandji.com/1",
+	"https://jamf.com/1",
+	"https://airwatch.com/1",
+	"https://microsoft.com/1",
+	"https://simplemdm.com/1",
+	"https://example.com/1",
+	"https://kandji.com/2",
+	"https://jamf.com/2",
+	"https://airwatch.com/2",
+	"https://microsoft.com/2",
+	"https://simplemdm.com/2",
+	"https://example.com/2",
+}
+
+// mdmMac returns the results for the `mdm` table query.
+//
+// If the host is enrolled via MDM it will return installed_from_dep as false
+// (which means the host will be identified as manually enrolled).
+//
+// NOTE: To support proper DEP simulation in a loadtest environment
+// we may need to implement a mocked Apple DEP endpoint.
+func (a *agent) mdmMac() []map[string]string {
+	if !a.mdmEnrolled() {
+		return []map[string]string{
+			{"enrolled": "false", "server_url": "", "installed_from_dep": "false"},
+		}
+	}
+	return []map[string]string{
+		{"enrolled": "true", "server_url": a.mdmClient.EnrollInfo.MDMURL, "installed_from_dep": "false"},
+	}
+}
+
+func (a *agent) mdmEnrolled() bool {
+	a.isEnrolledToMDMMu.Lock()
+	defer a.isEnrolledToMDMMu.Unlock()
+
+	return a.isEnrolledToMDM
+}
+
+func (a *agent) setMDMEnrolled() {
+	a.isEnrolledToMDMMu.Lock()
+	defer a.isEnrolledToMDMMu.Unlock()
+
+	a.isEnrolledToMDM = true
+}
+
+func (a *agent) mdmWindows() []map[string]string {
+	autopilot := rand.Intn(2) == 1
+	ix := rand.Intn(len(possibleMDMServerURLs))
+	serverURL := possibleMDMServerURLs[ix]
+	providerID := fleet.MDMNameFromServerURL(serverURL)
+	installType := "Microsoft Workstation"
+	if rand.Intn(4) == 1 {
+		installType = "Microsoft Server"
 	}
 
-	enrolled := "true"
-	if rand.Intn(2) == 1 {
-		enrolled = "false"
+	rows := []map[string]string{
+		{"key": "discovery_service_url", "value": serverURL},
+		{"key": "installation_type", "value": installType},
 	}
-	installedFromDep := "true"
-	if rand.Intn(2) == 1 {
-		installedFromDep = "false"
+	if providerID != "" {
+		rows = append(rows, map[string]string{"key": "provider_id", "value": providerID})
 	}
-	ix := rand.Intn(len(possibleURLs))
-	return []map[string]string{
-		{"enrolled": enrolled, "server_url": possibleURLs[ix], "installed_from_dep": installedFromDep},
+	if autopilot {
+		rows = append(rows, map[string]string{"key": "autopilot", "value": "true"})
 	}
+	return rows
 }
 
 var munkiIssues = func() []string {
@@ -771,96 +1134,159 @@ func (a *agent) diskSpace() []map[string]string {
 	}
 }
 
-func (a *agent) processQuery(name, query string) (handled bool, results []map[string]string, status *fleet.OsqueryStatus) {
+func (a *agent) diskEncryption() []map[string]string {
+	// 50% of results have encryption enabled
+	a.DiskEncryptionEnabled = rand.Intn(2) == 1
+	if a.DiskEncryptionEnabled {
+		return []map[string]string{{"1": "1"}}
+	}
+	return []map[string]string{}
+}
+
+func (a *agent) diskEncryptionLinux() []map[string]string {
+	// 50% of results have encryption enabled
+	a.DiskEncryptionEnabled = rand.Intn(2) == 1
+	if a.DiskEncryptionEnabled {
+		return []map[string]string{
+			{"path": "/etc", "encrypted": "0"},
+			{"path": "/tmp", "encrypted": "0"},
+			{"path": "/", "encrypted": "1"},
+		}
+	}
+	return []map[string]string{
+		{"path": "/etc", "encrypted": "0"},
+		{"path": "/tmp", "encrypted": "0"},
+	}
+}
+
+func (a *agent) runLiveQuery(query string) (results []map[string]string, status *fleet.OsqueryStatus, message *string) {
+	if a.liveQueryFailProb > 0.0 && rand.Float64() <= a.liveQueryFailProb {
+		ss := fleet.OsqueryStatus(1)
+		return []map[string]string{}, &ss, ptr.String("live query failed with error foobar")
+	}
+	ss := fleet.OsqueryStatus(0)
+	if a.liveQueryNoResultsProb > 0.0 && rand.Float64() <= a.liveQueryNoResultsProb {
+		return []map[string]string{}, &ss, nil
+	}
+	return []map[string]string{{
+		"admindir":   "/var/lib/dpkg",
+		"arch":       "amd64",
+		"maintainer": "foobar",
+		"name":       "netconf",
+		"priority":   "optional",
+		"revision":   "",
+		"section":    "default",
+		"size":       "112594",
+		"source":     "",
+		"status":     "install ok installed",
+		"version":    "20230224000000",
+	}}, &ss, nil
+}
+
+func (a *agent) processQuery(name, query string) (handled bool, results []map[string]string, status *fleet.OsqueryStatus, message *string) {
 	const (
 		hostPolicyQueryPrefix = "fleet_policy_query_"
 		hostDetailQueryPrefix = "fleet_detail_query_"
+		liveQueryPrefix       = "fleet_distributed_query_"
 	)
 	statusOK := fleet.StatusOK
 	statusNotOK := fleet.OsqueryStatus(1)
 
 	switch {
+	case strings.HasPrefix(name, liveQueryPrefix):
+		results, status, message = a.runLiveQuery(query)
+		return true, results, status, message
 	case strings.HasPrefix(name, hostPolicyQueryPrefix):
-		return true, a.runPolicy(query), &statusOK
+		return true, a.runPolicy(query), &statusOK, nil
 	case name == hostDetailQueryPrefix+"scheduled_query_stats":
-		return true, a.randomQueryStats(), &statusOK
+		return true, a.randomQueryStats(), &statusOK, nil
 	case name == hostDetailQueryPrefix+"mdm":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
-			results = a.mdm()
+			results = a.mdmMac()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
+	case name == hostDetailQueryPrefix+"mdm_windows":
+		ss := fleet.OsqueryStatus(rand.Intn(2))
+		if ss == fleet.StatusOK {
+			results = a.mdmWindows()
+		}
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"munki_info":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.munkiInfo()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"google_chrome_profiles":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.googleChromeProfiles()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"battery":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.batteries()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"users":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
-			results = a.hostUsersMacOS()
+			results = a.hostUsers()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"software_macos":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.softwareMacOS()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"software_windows":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.softwareWindows11()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"software_linux":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			switch a.os {
-			case "ubuntu_16.04":
-				results = a.softwareUbuntu1604()
-			case "ubuntu_18.04":
-				results = a.softwareUbuntu1804()
-			case "ubuntu_20.04":
-				results = a.softwareUbuntu2004()
-			case "ubuntu_21.04":
-				results = a.softwareUbuntu2104()
-			case "ubuntu_21.10":
-				results = a.softwareUbuntu2110()
 			case "ubuntu_22.04":
 				results = a.softwareUbuntu2204()
 			}
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"disk_space_unix" || name == hostDetailQueryPrefix+"disk_space_windows":
 		ss := fleet.OsqueryStatus(rand.Intn(2))
 		if ss == fleet.StatusOK {
 			results = a.diskSpace()
 		}
-		return true, results, &ss
+		return true, results, &ss, nil
+
+	case strings.HasPrefix(name, hostDetailQueryPrefix+"disk_encryption_linux"):
+		ss := fleet.OsqueryStatus(rand.Intn(2))
+		if ss == fleet.StatusOK {
+			results = a.diskEncryptionLinux()
+		}
+		return true, results, &ss, nil
+	case name == hostDetailQueryPrefix+"disk_encryption_darwin" ||
+		name == hostDetailQueryPrefix+"disk_encryption_windows":
+		ss := fleet.OsqueryStatus(rand.Intn(2))
+		if ss == fleet.StatusOK {
+			results = a.diskEncryption()
+		}
+		return true, results, &ss, nil
 	case name == hostDetailQueryPrefix+"kubequery_info" && a.os != "kubequery":
 		// Real osquery running on hosts would return no results if it was not
 		// running kubequery (due to discovery query). Returning true here so that
 		// the caller knows it is handled, will not try to return lorem-ipsum-style
 		// results.
-		return true, nil, &statusNotOK
+		return true, nil, &statusNotOK, nil
 	default:
 		// Look for results in the template file.
 		if t := a.templates.Lookup(name); t == nil {
-			return false, nil, nil
+			return false, nil, nil, nil
 		}
 		var ni bytes.Buffer
 		err := a.templates.ExecuteTemplate(&ni, name, a)
@@ -872,7 +1298,7 @@ func (a *agent) processQuery(name, query string) (handled bool, results []map[st
 			panic(err)
 		}
 
-		return true, results, &statusOK
+		return true, results, &statusOK, nil
 	}
 }
 
@@ -880,10 +1306,11 @@ func (a *agent) DistributedWrite(queries map[string]string) {
 	r := service.SubmitDistributedQueryResultsRequest{
 		Results:  make(fleet.OsqueryDistributedQueryResults),
 		Statuses: make(map[string]fleet.OsqueryStatus),
+		Messages: make(map[string]string),
 	}
 	r.NodeKey = a.nodeKey
 	for name, query := range queries {
-		handled, results, status := a.processQuery(name, query)
+		handled, results, status, message := a.processQuery(name, query)
 		if !handled {
 			// If osquery-perf does not handle the incoming query,
 			// always return status OK and the default query result.
@@ -895,6 +1322,9 @@ func (a *agent) DistributedWrite(queries map[string]string) {
 			}
 			if status != nil {
 				r.Statuses[name] = *status
+			}
+			if message != nil {
+				r.Messages[name] = *message
 			}
 		}
 	}
@@ -916,55 +1346,87 @@ func (a *agent) DistributedWrite(queries map[string]string) {
 	fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(res)
 
-	a.stats.RecordStats(0, 0, 1)
+	a.stats.IncrementDistributedWrites()
 	// No need to read the distributed write body
 }
 
 func main() {
-	serverURL := flag.String("server_url", "https://localhost:8080", "URL (with protocol and port of osquery server)")
-	enrollSecret := flag.String("enroll_secret", "", "Enroll secret to authenticate enrollment")
-	hostCount := flag.Int("host_count", 10, "Number of hosts to start (default 10)")
-	randSeed := flag.Int64("seed", time.Now().UnixNano(), "Seed for random generator (default current time)")
-	startPeriod := flag.Duration("start_period", 10*time.Second, "Duration to spread start of hosts over")
-	configInterval := flag.Duration("config_interval", 1*time.Minute, "Interval for config requests")
-	queryInterval := flag.Duration("query_interval", 10*time.Second, "Interval for live query requests")
-	onlyAlreadyEnrolled := flag.Bool("only_already_enrolled", false, "Only start agents that are already enrolled")
-	nodeKeyFile := flag.String("node_key_file", "", "File with node keys to use")
-	commonSoftwareCount := flag.Int("common_software_count", 10, "Number of common installed applications reported to fleet")
-	uniqueSoftwareCount := flag.Int("unique_software_count", 10, "Number of unique installed applications reported to fleet")
-	vulnerableSoftwareCount := flag.Int("vulnerable_software_count", 10, "Number of vulnerable installed applications reported to fleet")
-	withLastOpenedSoftwareCount := flag.Int("with_last_opened_software_count", 10, "Number of applications that may report a last opened timestamp to fleet")
-	lastOpenedChangeProb := flag.Float64("last_opened_change_prob", 0.1, "Probability of last opened timestamp to be reported as changed [0, 1]")
-	commonUserCount := flag.Int("common_user_count", 10, "Number of common host users reported to fleet")
-	uniqueUserCount := flag.Int("unique_user_count", 10, "Number of unique host users reported to fleet")
-	policyPassProb := flag.Float64("policy_pass_prob", 1.0, "Probability of policies to pass [0, 1]")
-	orbitProb := flag.Float64("orbit_prob", 0.5, "Probability of a host being identified as orbit install [0, 1]")
-	munkiIssueProb := flag.Float64("munki_issue_prob", 0.5, "Probability of a host having munki issues (note that ~50% of hosts have munki installed) [0, 1]")
-	munkiIssueCount := flag.Int("munki_issue_count", 10, "Number of munki issues reported by hosts identified to have munki issues")
+	validTemplateNames := map[string]bool{
+		"mac10.14.6.tmpl":   true,
+		"windows_11.tmpl":   true,
+		"ubuntu_22.04.tmpl": true,
+	}
+	allowedTemplateNames := make([]string, 0, len(validTemplateNames))
+	for k := range validTemplateNames {
+		allowedTemplateNames = append(allowedTemplateNames, k)
+	}
+
+	var (
+		serverURL           = flag.String("server_url", "https://localhost:8080", "URL (with protocol and port of osquery server)")
+		enrollSecret        = flag.String("enroll_secret", "", "Enroll secret to authenticate enrollment")
+		hostCount           = flag.Int("host_count", 10, "Number of hosts to start (default 10)")
+		randSeed            = flag.Int64("seed", time.Now().UnixNano(), "Seed for random generator (default current time)")
+		startPeriod         = flag.Duration("start_period", 10*time.Second, "Duration to spread start of hosts over")
+		configInterval      = flag.Duration("config_interval", 1*time.Minute, "Interval for config requests")
+		queryInterval       = flag.Duration("query_interval", 10*time.Second, "Interval for live query requests")
+		mdmCheckInInterval  = flag.Duration("mdm_check_in_interval", 10*time.Second, "Interval for performing MDM check ins")
+		onlyAlreadyEnrolled = flag.Bool("only_already_enrolled", false, "Only start agents that are already enrolled")
+		nodeKeyFile         = flag.String("node_key_file", "", "File with node keys to use")
+
+		commonSoftwareCount          = flag.Int("common_software_count", 10, "Number of common installed applications reported to fleet")
+		commonSoftwareUninstallCount = flag.Int("common_software_uninstall_count", 1, "Number of common software to uninstall")
+		commonSoftwareUninstallProb  = flag.Float64("common_software_uninstall_prob", 0.1, "Probability of uninstalling common_software_uninstall_count unique software/s")
+
+		uniqueSoftwareCount          = flag.Int("unique_software_count", 10, "Number of uninstalls ")
+		uniqueSoftwareUninstallCount = flag.Int("unique_software_uninstall_count", 1, "Number of unique software to uninstall")
+		uniqueSoftwareUninstallProb  = flag.Float64("unique_software_uninstall_prob", 0.1, "Probability of uninstalling unique_software_uninstall_count common software/s")
+
+		vulnerableSoftwareCount     = flag.Int("vulnerable_software_count", 10, "Number of vulnerable installed applications reported to fleet")
+		withLastOpenedSoftwareCount = flag.Int("with_last_opened_software_count", 10, "Number of applications that may report a last opened timestamp to fleet")
+		lastOpenedChangeProb        = flag.Float64("last_opened_change_prob", 0.1, "Probability of last opened timestamp to be reported as changed [0, 1]")
+		commonUserCount             = flag.Int("common_user_count", 10, "Number of common host users reported to fleet")
+		uniqueUserCount             = flag.Int("unique_user_count", 10, "Number of unique host users reported to fleet")
+		policyPassProb              = flag.Float64("policy_pass_prob", 1.0, "Probability of policies to pass [0, 1]")
+		orbitProb                   = flag.Float64("orbit_prob", 0.5, "Probability of a host being identified as orbit install [0, 1]")
+		munkiIssueProb              = flag.Float64("munki_issue_prob", 0.5, "Probability of a host having munki issues (note that ~50% of hosts have munki installed) [0, 1]")
+		munkiIssueCount             = flag.Int("munki_issue_count", 10, "Number of munki issues reported by hosts identified to have munki issues")
+		osTemplates                 = flag.String("os_templates", "mac10.14.6", fmt.Sprintf("Comma separated list of host OS templates to use (any of %v, with or without the .tmpl extension)", allowedTemplateNames))
+		emptySerialProb             = flag.Float64("empty_serial_prob", 0.1, "Probability of a host having no serial number [0, 1]")
+
+		mdmProb          = flag.Float64("mdm_prob", 0.0, "Probability of a host enrolling via MDM (for macOS) [0, 1]")
+		mdmSCEPChallenge = flag.String("mdm_scep_challenge", "", "SCEP challenge to use when running MDM enroll")
+
+		liveQueryFailProb      = flag.Float64("live_query_fail_prob", 0.0, "Probability of a live query failing execution in the host")
+		liveQueryNoResultsProb = flag.Float64("live_query_no_results_prob", 0.2, "Probability of a live query returning no results")
+	)
 
 	flag.Parse()
-
 	rand.Seed(*randSeed)
 
-	templateNames := []string{
-		"mac10.14.6.tmpl",
+	if *onlyAlreadyEnrolled {
+		// Orbit enrollment does not support the "already enrolled" mode at the
+		// moment (see TODO in this file).
+		*orbitProb = 0
+	}
 
-		// Uncomment this to add windows hosts
-		// "windows_11.tmpl",
-
-		// Uncomment this to add ubuntu hosts with vulnerable software
-		// "partial_ubuntu.tmpl",
-		// "ubuntu_16.04.tmpl",
-		// "ubuntu_18.04.tmpl",
-		// "ubuntu_20.04.tmpl",
-		// "ubuntu_21.04.tmpl",
-		// "ubuntu_21.10.tmpl",
-		// "ubuntu_22.04.tmpl",
+	if *commonSoftwareUninstallCount >= *commonSoftwareCount {
+		log.Fatalf("Argument common_software_uninstall_count cannot be bigger than common_software_count")
+	}
+	if *uniqueSoftwareUninstallCount >= *uniqueSoftwareCount {
+		log.Fatalf("Argument unique_software_uninstall_count cannot be bigger than unique_software_count")
 	}
 
 	var tmpls []*template.Template
-	for _, t := range templateNames {
-		tmpl, err := template.ParseFS(templatesFS, t)
+	requestedTemplates := strings.Split(*osTemplates, ",")
+	for _, nm := range requestedTemplates {
+		if !strings.HasSuffix(nm, ".tmpl") {
+			nm += ".tmpl"
+		}
+		if !validTemplateNames[nm] {
+			log.Fatalf("Invalid template name: %s (accepted values: %v)", nm, allowedTemplateNames)
+		}
+
+		tmpl, err := template.ParseFS(templatesFS, nm)
 		if err != nil {
 			log.Fatal("parse templates: ", err)
 		}
@@ -985,18 +1447,25 @@ func main() {
 
 	for i := 0; i < *hostCount; i++ {
 		tmpl := tmpls[i%len(tmpls)]
-		if strings.HasPrefix(tmpl.Name(), "partial") {
-			continue
-		}
-		a := newAgent(i+1, *serverURL, *enrollSecret, tmpl, *configInterval, *queryInterval,
+		a := newAgent(i+1,
+			*serverURL,
+			*enrollSecret,
+			tmpl,
+			*configInterval,
+			*queryInterval,
+			*mdmCheckInInterval,
 			softwareEntityCount{
 				entityCount: entityCount{
 					common: *commonSoftwareCount,
 					unique: *uniqueSoftwareCount,
 				},
-				vulnerable:     *vulnerableSoftwareCount,
-				withLastOpened: *withLastOpenedSoftwareCount,
-				lastOpenedProb: *lastOpenedChangeProb,
+				vulnerable:                   *vulnerableSoftwareCount,
+				withLastOpened:               *withLastOpenedSoftwareCount,
+				lastOpenedProb:               *lastOpenedChangeProb,
+				commonSoftwareUninstallCount: *commonSoftwareUninstallCount,
+				commonSoftwareUninstallProb:  *commonSoftwareUninstallProb,
+				uniqueSoftwareUninstallCount: *uniqueSoftwareUninstallCount,
+				uniqueSoftwareUninstallProb:  *uniqueSoftwareUninstallProb,
 			}, entityCount{
 				common: *commonUserCount,
 				unique: *uniqueUserCount,
@@ -1005,10 +1474,15 @@ func main() {
 			*orbitProb,
 			*munkiIssueProb,
 			*munkiIssueCount,
+			*emptySerialProb,
+			*mdmProb,
+			*mdmSCEPChallenge,
+			*liveQueryFailProb,
+			*liveQueryNoResultsProb,
 		)
 		a.stats = stats
 		a.nodeKeyManager = nodeKeyManager
-		go a.runLoop(i, onlyAlreadyEnrolled != nil && *onlyAlreadyEnrolled)
+		go a.runLoop(i, *onlyAlreadyEnrolled)
 		time.Sleep(sleepTime)
 	}
 

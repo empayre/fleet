@@ -1,7 +1,8 @@
 import React, { useState, useRef, useLayoutEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
+import { uniqueId } from "lodash";
 
 import ReactTooltip from "react-tooltip";
+import { DEFAULT_EMPTY_CELL_VALUE } from "utilities/constants";
 
 interface ITruncatedTextCellProps {
   value: string | number | boolean;
@@ -26,34 +27,40 @@ const TruncatedTextCell = ({
     }
   }, []);
 
-  const id = uuidv4();
+  const tooltipId = uniqueId();
   const tooltipDisabled = offsetWidth === scrollWidth;
-
+  const isDefaultValue = value === DEFAULT_EMPTY_CELL_VALUE;
   return (
     <div ref={ref} className={`${baseClass} ${classes}`}>
       <div
         className={"data-table__truncated-text"}
         data-tip
-        data-for={id}
+        data-for={tooltipId}
         data-tip-disable={tooltipDisabled}
       >
         <span
           className={`data-table__truncated-text--cell ${
-            tooltipDisabled ? "" : "truncated"
-          }`}
+            isDefaultValue ? "text-muted" : ""
+          } ${tooltipDisabled ? "" : "truncated"}`}
         >
           {value}
         </span>
       </div>
       <ReactTooltip
-        place="bottom"
+        place="top"
         effect="solid"
         backgroundColor="#3e4771"
-        id={id}
+        id={tooltipId}
         data-html
         className={"truncated-tooltip"} // responsive widths
+        clickable
+        delayHide={200} // need delay set to hover using clickable
       >
-        {value}
+        <>
+          {value}
+          <div className="safari-hack">&nbsp;</div>
+          {/* Fixes triple click selecting next element in Safari */}
+        </>
       </ReactTooltip>
     </div>
   );

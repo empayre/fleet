@@ -1,17 +1,20 @@
 import React from "react";
 import { Column } from "react-table";
+import { InjectedRouter } from "react-router";
 import ReactTooltip from "react-tooltip";
-import { Link } from "react-router";
 
 import { formatSoftwareType, ISoftware } from "interfaces/software";
 import { IVulnerability } from "interfaces/vulnerability";
 import PATHS from "router/paths";
 import { formatFloatAsPercentage } from "utilities/helpers";
+import { DEFAULT_EMPTY_CELL_VALUE } from "utilities/constants";
 
+import Button from "components/buttons/Button";
 import HeaderCell from "components/TableContainer/DataTable/HeaderCell";
 import TextCell from "components/TableContainer/DataTable/TextCell";
 import TooltipWrapper from "components/TooltipWrapper";
-import Chevron from "../../../../assets/images/icon-chevron-right-blue-16x16@2x.png";
+import ViewAllHostsLink from "components/ViewAllHostsLink";
+import PremiumFeatureIconWithTooltip from "components/PremiumFeatureIconWithTooltip";
 
 // NOTE: cellProps come from react-table
 // more info here https://react-table.tanstack.com/docs/api/useTable#cell-properties
@@ -65,6 +68,7 @@ const condenseVulnerabilities = (
 const renderBundleTooltip = (name: string, bundle: string) => (
   <span className="name-container">
     <TooltipWrapper
+      position="top"
       tipContent={`
         <span>
           <b>Bundle identifier: </b>
@@ -84,7 +88,7 @@ const getMaxProbability = (vulns: IVulnerability[]) =>
     0
   );
 
-const generateEPSSColumnHeader = () => {
+const generateEPSSColumnHeader = (isSandboxMode = false) => {
   return {
     Header: (headerProps: IHeaderProps): JSX.Element => {
       const titleWithToolTip = (
@@ -101,10 +105,13 @@ const generateEPSSColumnHeader = () => {
         </TooltipWrapper>
       );
       return (
-        <HeaderCell
-          value={titleWithToolTip}
-          isSortedDesc={headerProps.column.isSortedDesc}
-        />
+        <>
+          {isSandboxMode && <PremiumFeatureIconWithTooltip />}
+          <HeaderCell
+            value={titleWithToolTip}
+            isSortedDesc={headerProps.column.isSortedDesc}
+          />
+        </>
       );
     },
     disableSortBy: false,
@@ -113,7 +120,8 @@ const generateEPSSColumnHeader = () => {
       const vulns = cellProps.cell.value || [];
       const maxProbability = (!!vulns.length && getMaxProbability(vulns)) || 0;
       const displayValue =
-        (maxProbability && formatFloatAsPercentage(maxProbability)) || "---";
+        (maxProbability && formatFloatAsPercentage(maxProbability)) ||
+        DEFAULT_EMPTY_CELL_VALUE;
 
       return (
         <span
@@ -178,19 +186,37 @@ const generateVulnColumnHeader = () => {
   };
 };
 
-const generateTableHeaders = (isPremiumTier?: boolean): Column[] => {
+const generateTableHeaders = (
+  router: InjectedRouter,
+  isPremiumTier?: boolean,
+  isSandboxMode?: boolean,
+  teamId?: number
+): Column[] => {
   const softwareTableHeaders = [
     {
       title: "Name",
-      Header: "Name",
-      disableSortBy: true,
+      Header: (cellProps: IHeaderProps): JSX.Element => (
+        <HeaderCell
+          value={cellProps.column.title}
+          isSortedDesc={cellProps.column.isSortedDesc}
+        />
+      ),
+      disableSortBy: false,
       accessor: "name",
       Cell: (cellProps: IStringCellProps): JSX.Element => {
         const { id, name, bundle_identifier: bundle } = cellProps.row.original;
+
+        const onClickSoftware = (e: React.MouseEvent) => {
+          // Allows for button to be clickable in a clickable row
+          e.stopPropagation();
+
+          router?.push(PATHS.SOFTWARE_DETAILS(id.toString()));
+        };
+
         return (
-          <Link to={`${PATHS.SOFTWARE_DETAILS(id.toString())}`}>
+          <Button onClick={onClickSoftware} variant="text-link">
             {bundle ? renderBundleTooltip(name, bundle) : name}
-          </Link>
+          </Button>
         );
       },
       sortType: "caseInsensitive",
@@ -213,12 +239,15 @@ const generateTableHeaders = (isPremiumTier?: boolean): Column[] => {
         <TextCell formatter={formatSoftwareType} value={cellProps.cell.value} />
       ),
     },
-    isPremiumTier ? generateEPSSColumnHeader() : generateVulnColumnHeader(),
+    isPremiumTier
+      ? generateEPSSColumnHeader(isSandboxMode)
+      : generateVulnColumnHeader(),
     {
       title: "Hosts",
       Header: (cellProps: IHeaderProps): JSX.Element => (
         <HeaderCell
           value={cellProps.column.title}
+          disableSortBy={false}
           isSortedDesc={cellProps.column.isSortedDesc}
         />
       ),
@@ -230,13 +259,13 @@ const generateTableHeaders = (isPremiumTier?: boolean): Column[] => {
             <TextCell value={cellProps.cell.value} />
           </span>
           <span className="hosts-cell__link">
-            <Link
-              to={`${PATHS.MANAGE_HOSTS}?software_id=${cellProps.row.original.id}`}
+            <ViewAllHostsLink
+              queryParams={{
+                software_id: cellProps.row.original.id,
+                team_id: teamId,
+              }}
               className="software-link"
-            >
-              <span className="link-text">View all hosts</span>
-              <img alt="link to hosts filtered by software ID" src={Chevron} />
-            </Link>
+            />
           </span>
         </span>
       ),

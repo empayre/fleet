@@ -2,7 +2,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 4.10.0"
+      version = "~> 4.48.0"
     }
     docker = {
       source  = "kreuzwerker/docker"
@@ -194,6 +194,9 @@ module "pre-provisioner" {
   oidc_provider_arn = module.shared-infrastructure.oidc_provider_arn
   oidc_provider     = module.shared-infrastructure.oidc_provider
   ecr               = module.shared-infrastructure.ecr
+  license_key       = var.license_key
+  apm_url           = var.apm_url
+  apm_token         = var.apm_token
 }
 
 module "jit-provisioner" {
@@ -221,6 +224,14 @@ module "monitoring" {
   jitprovisioner = module.jit-provisioner.jitprovisioner
   deprovisioner  = module.jit-provisioner.deprovisioner
   dynamodb_table = aws_dynamodb_table.lifecycle-table
+}
+
+module "data" {
+  source                = "./Data"
+  prefix                = "${local.prefix}-data"
+  vpc                   = module.vpc
+  access_logs_s3_bucket = module.shared-infrastructure.access_logs_s3_bucket
+  kms_key               = aws_kms_key.main
 }
 
 resource "aws_dynamodb_table" "lifecycle-table" {
@@ -283,3 +294,6 @@ resource "aws_ecs_cluster" "main" {
 }
 
 variable "slack_webhook" {}
+variable "license_key" {}
+variable "apm_url" {}
+variable "apm_token" {}

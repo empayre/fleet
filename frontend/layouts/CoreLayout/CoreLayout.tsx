@@ -1,5 +1,7 @@
 import React, { useState, useContext } from "react";
 import { InjectedRouter } from "react-router";
+import { Params } from "react-router/lib/Router";
+
 import { AppContext } from "context/app";
 import { NotificationContext } from "context/notification";
 import { TableContext } from "context/table";
@@ -8,33 +10,45 @@ import paths from "router/paths";
 import useDeepEffect from "hooks/useDeepEffect";
 import FlashMessage from "components/FlashMessage";
 import SiteTopNav from "components/top_nav/SiteTopNav";
+import CustomLink from "components/CustomLink";
 import { INotification } from "interfaces/notification";
 import { licenseExpirationWarning } from "utilities/helpers";
-import ExternalLinkIcon from "../../../assets/images/icon-external-link-12x12@2x.png";
+import { QueryParams } from "utilities/url";
 
 import smallScreenImage from "../../../assets/images/small-screen-160x80@2x.png";
 
 interface ICoreLayoutProps {
   children: React.ReactNode;
   router: InjectedRouter; // v3
+  // TODO: standardize typing and usage of location across app components
+  location: {
+    pathname: string;
+    search: string;
+    hash?: string;
+    query: QueryParams;
+  };
+  params: Params;
 }
 
 const expirationMessage = (
   <>
     Your license for Fleet Premium is about to expire. If you’d like to renew or
     have questions about downgrading,{" "}
-    <a
-      href="https://fleetdm.com/docs/using-fleet/faq#how-do-i-downgrade-from-fleet-premium-to-fleet-free"
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      please head to the Fleet documentation
-      <img src={ExternalLinkIcon} alt="Open external link" id="new-tab-icon" />
-    </a>
+    <CustomLink
+      url="https://fleetdm.com/docs/using-fleet/faq#how-do-i-downgrade-from-fleet-premium-to-fleet-free"
+      text="please head to the Fleet documentation"
+      newTab
+      multiline
+    />
   </>
 );
 
-const CoreLayout = ({ children, router }: ICoreLayoutProps) => {
+const CoreLayout = ({
+  children,
+  router,
+  location,
+  params: routeParams,
+}: ICoreLayoutProps) => {
   const { config, currentUser, isPremiumTier } = useContext(AppContext);
   const { notification, hideFlash } = useContext(NotificationContext);
   const { setResetSelectedRows } = useContext(TableContext);
@@ -102,8 +116,6 @@ const CoreLayout = ({ children, router }: ICoreLayoutProps) => {
     return null;
   }
 
-  const { pathname } = global.window.location;
-
   return (
     <div className="app-wrap">
       <div className="overlay">
@@ -113,13 +125,13 @@ const CoreLayout = ({ children, router }: ICoreLayoutProps) => {
           <p>Please enlarge your browser or try again on a computer.</p>
         </div>
       </div>
-      <nav className="site-nav">
+      <nav className="site-nav-container">
         <SiteTopNav
           config={config}
+          currentUser={currentUser}
+          location={location}
           onLogoutUser={onLogoutUser}
           onNavItemClick={onNavItemClick}
-          pathname={pathname}
-          currentUser={currentUser}
         />
       </nav>
       <div className="core-wrapper">

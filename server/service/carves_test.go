@@ -17,7 +17,7 @@ import (
 
 func TestListCarves(t *testing.T) {
 	ds := new(mock.Store)
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 
 	ds.ListCarvesFunc = func(ctx context.Context, opts fleet.CarveListOptions) ([]*fleet.CarveMetadata, error) {
 		return []*fleet.CarveMetadata{
@@ -27,24 +27,24 @@ func TestListCarves(t *testing.T) {
 	}
 
 	// admin user
-	carves, err := svc.ListCarves(test.UserContext(test.UserAdmin), fleet.CarveListOptions{})
+	carves, err := svc.ListCarves(test.UserContext(ctx, test.UserAdmin), fleet.CarveListOptions{})
 	require.NoError(t, err)
 	require.Len(t, carves, 2)
 
 	// only global admin can read carves
-	_, err = svc.ListCarves(test.UserContext(test.UserNoRoles), fleet.CarveListOptions{})
+	_, err = svc.ListCarves(test.UserContext(ctx, test.UserNoRoles), fleet.CarveListOptions{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 
 	// no user in context
-	_, err = svc.ListCarves(context.Background(), fleet.CarveListOptions{})
+	_, err = svc.ListCarves(ctx, fleet.CarveListOptions{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 }
 
 func TestGetCarve(t *testing.T) {
 	ds := new(mock.Store)
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 
 	ds.CarveFunc = func(ctx context.Context, id int64) (*fleet.CarveMetadata, error) {
 		return &fleet.CarveMetadata{
@@ -53,17 +53,17 @@ func TestGetCarve(t *testing.T) {
 	}
 
 	// admin user
-	carve, err := svc.GetCarve(test.UserContext(test.UserAdmin), 1)
+	carve, err := svc.GetCarve(test.UserContext(ctx, test.UserAdmin), 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), carve.ID)
 
 	// only global admin can read carves
-	_, err = svc.GetCarve(test.UserContext(test.UserNoRoles), 1)
+	_, err = svc.GetCarve(test.UserContext(ctx, test.UserNoRoles), 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 
 	// no user in context
-	_, err = svc.GetCarve(context.Background(), 1)
+	_, err = svc.GetCarve(ctx, 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 }
@@ -93,12 +93,12 @@ func TestCarveGetBlock(t *testing.T) {
 		return []byte("foobar"), nil
 	}
 
-	data, err := svc.GetBlock(test.UserContext(test.UserAdmin), metadata.ID, 3)
+	data, err := svc.GetBlock(test.UserContext(context.Background(), test.UserAdmin), metadata.ID, 3)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("foobar"), data)
 
 	// only global admin can read carves
-	_, err = svc.GetBlock(test.UserContext(test.UserNoRoles), metadata.ID, 2)
+	_, err = svc.GetBlock(test.UserContext(context.Background(), test.UserNoRoles), metadata.ID, 2)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 }
@@ -124,7 +124,7 @@ func TestCarveGetBlockNotAvailableError(t *testing.T) {
 	}
 
 	// Block requested is greater than max block
-	_, err := svc.GetBlock(test.UserContext(test.UserAdmin), metadata.ID, 7)
+	_, err := svc.GetBlock(test.UserContext(context.Background(), test.UserAdmin), metadata.ID, 7)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not yet available")
 }
@@ -155,7 +155,7 @@ func TestCarveGetBlockGetBlockError(t *testing.T) {
 	}
 
 	// GetBlock failed
-	_, err := svc.GetBlock(test.UserContext(test.UserAdmin), metadata.ID, 3)
+	_, err := svc.GetBlock(test.UserContext(context.Background(), test.UserAdmin), metadata.ID, 3)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "yow!!")
 }
@@ -182,7 +182,7 @@ func TestCarveGetBlockExpired(t *testing.T) {
 	}
 
 	// carve is expired
-	_, err := svc.GetBlock(test.UserContext(test.UserAdmin), metadata.ID, 3)
+	_, err := svc.GetBlock(test.UserContext(context.Background(), test.UserAdmin), metadata.ID, 3)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expired carve")
 }
@@ -459,6 +459,11 @@ func TestCarveCarveBlockBlockCountExceedError(t *testing.T) {
 		assert.Equal(t, metadata.SessionId, sessionId)
 		return metadata, nil
 	}
+	ms.UpdateCarveFunc = func(ctx context.Context, carve *fleet.CarveMetadata) error {
+		assert.NotNil(t, carve.Error)
+		assert.Equal(t, *carve.Error, "block_id exceeds expected max (22): 23")
+		return nil
+	}
 
 	payload := fleet.CarveBlockPayload{
 		Data:      []byte("this is the carve data :)"),
@@ -490,6 +495,11 @@ func TestCarveCarveBlockBlockCountMatchError(t *testing.T) {
 		assert.Equal(t, metadata.SessionId, sessionId)
 		return metadata, nil
 	}
+	ms.UpdateCarveFunc = func(ctx context.Context, carve *fleet.CarveMetadata) error {
+		assert.NotNil(t, carve.Error)
+		assert.Equal(t, *carve.Error, "block_id does not match expected block (4): 7")
+		return nil
+	}
 
 	payload := fleet.CarveBlockPayload{
 		Data:      []byte("this is the carve data :)"),
@@ -520,6 +530,11 @@ func TestCarveCarveBlockBlockSizeError(t *testing.T) {
 	ms.CarveBySessionIdFunc = func(ctx context.Context, sessionId string) (*fleet.CarveMetadata, error) {
 		assert.Equal(t, metadata.SessionId, sessionId)
 		return metadata, nil
+	}
+	ms.UpdateCarveFunc = func(ctx context.Context, carve *fleet.CarveMetadata) error {
+		assert.NotNil(t, carve.Error)
+		assert.Equal(t, *carve.Error, "exceeded declared block size 16: 37")
+		return nil
 	}
 
 	payload := fleet.CarveBlockPayload{
@@ -554,6 +569,11 @@ func TestCarveCarveBlockNewBlockError(t *testing.T) {
 	}
 	ms.NewBlockFunc = func(ctx context.Context, carve *fleet.CarveMetadata, blockId int64, data []byte) error {
 		return errors.New("kaboom!")
+	}
+	ms.UpdateCarveFunc = func(ctx context.Context, carve *fleet.CarveMetadata) error {
+		assert.NotNil(t, carve.Error)
+		assert.Equal(t, *carve.Error, "kaboom!")
+		return nil
 	}
 
 	payload := fleet.CarveBlockPayload{

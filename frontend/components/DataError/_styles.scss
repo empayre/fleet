@@ -3,13 +3,6 @@
   flex-direction: column;
   align-items: center;
 
-  #error-icon {
-    height: 12px;
-    width: 12px;
-    margin-right: 8px;
-    margin-bottom: -1px;
-  }
-
   &__card {
     display: flex;
     flex-direction: row;
@@ -19,16 +12,16 @@
   &__inner {
     display: flex;
     flex-direction: row;
-    margin: $pad-xxxlarge 0;
   }
 
   .info {
     &__header {
-      display: block;
+      display: flex;
       color: $core-fleet-black;
       font-weight: $bold;
       font-size: $x-small;
       text-align: left;
+      gap: $pad-small;
     }
     &__data {
       display: block;

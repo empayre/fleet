@@ -81,7 +81,7 @@ func TestTriggerVulnerabilitiesWebhook(t *testing.T) {
 	t.Run("trigger requests", func(t *testing.T) {
 		now := time.Now()
 
-		hosts := []*fleet.HostShort{
+		hosts := []fleet.HostVulnerabilitySummary{
 			{ID: 1, Hostname: "h1", DisplayName: "d1"},
 			{ID: 2, Hostname: "h2", DisplayName: "d2"},
 			{ID: 3, Hostname: "h3", DisplayName: "d3"},
@@ -105,7 +105,7 @@ func TestTriggerVulnerabilitiesWebhook(t *testing.T) {
 			name  string
 			vulns []fleet.SoftwareVulnerability
 			meta  map[string]fleet.CVEMeta
-			hosts []*fleet.HostShort
+			hosts []fleet.HostVulnerabilitySummary
 			want  string
 		}{
 			{
@@ -117,35 +117,48 @@ func TestTriggerVulnerabilitiesWebhook(t *testing.T) {
 			},
 			{
 				"1 vuln in multiple software, 1 host",
-				[]fleet.SoftwareVulnerability{{CVE: cves[0], SoftwareID: 1}, {CVE: cves[0], SoftwareID: 1}, {CVE: cves[0], SoftwareID: 2}},
+				[]fleet.SoftwareVulnerability{
+					{CVE: cves[0], SoftwareID: 1},
+					{CVE: cves[0], SoftwareID: 1},
+					{CVE: cves[0], SoftwareID: 2},
+				},
 				nil,
 				hosts[:1],
 				fmt.Sprintf("%s[%s]}}", jsonCVE1, jsonH1),
 			},
 			{
 				"1 vuln, 2 hosts",
-				[]fleet.SoftwareVulnerability{{CVE: cves[0], SoftwareID: 1}},
+				[]fleet.SoftwareVulnerability{
+					{CVE: cves[0], SoftwareID: 1},
+				},
 				nil,
 				hosts[:2],
 				fmt.Sprintf("%s[%s,%s]}}", jsonCVE1, jsonH1, jsonH2),
 			},
 			{
 				"1 vuln, 3 hosts",
-				[]fleet.SoftwareVulnerability{{CVE: cves[0], SoftwareID: 1}},
+				[]fleet.SoftwareVulnerability{
+					{CVE: cves[0], SoftwareID: 1},
+				},
 				nil,
 				hosts[:3],
 				fmt.Sprintf("%s[%s,%s]}}\n%s[%s]}}", jsonCVE1, jsonH1, jsonH2, jsonCVE1, jsonH3), // 2 requests, batch of 2 max
 			},
 			{
 				"1 vuln, 4 hosts",
-				[]fleet.SoftwareVulnerability{{CVE: cves[0], SoftwareID: 1}},
+				[]fleet.SoftwareVulnerability{
+					{CVE: cves[0], SoftwareID: 1},
+				},
 				nil,
 				hosts[:4],
 				fmt.Sprintf("%s[%s,%s]}}\n%s[%s,%s]}}", jsonCVE1, jsonH1, jsonH2, jsonCVE1, jsonH3, jsonH4), // 2 requests, batch of 2 max
 			},
 			{
 				"2 vulns, 1 host each",
-				[]fleet.SoftwareVulnerability{{CVE: cves[0], SoftwareID: 1}, {CVE: cves[1], SoftwareID: 2}},
+				[]fleet.SoftwareVulnerability{
+					{CVE: cves[0], SoftwareID: 1},
+					{CVE: cves[1], SoftwareID: 2},
+				},
 				nil,
 				hosts[:1],
 				fmt.Sprintf("%s[%s]}}\n%s[%s]}}", jsonCVE1, jsonH1, jsonCVE2, jsonH1),
@@ -160,11 +173,12 @@ func TestTriggerVulnerabilitiesWebhook(t *testing.T) {
 					b, err := ioutil.ReadAll(r.Body)
 					assert.NoError(t, err)
 					requests = append(requests, string(b))
-					w.Write(nil)
+					_, err = w.Write(nil)
+					assert.NoError(t, err)
 				}))
 				defer srv.Close()
 
-				ds.HostsBySoftwareIDsFunc = func(ctx context.Context, softwareIDs []uint) ([]*fleet.HostShort, error) {
+				ds.HostVulnSummariesBySoftwareIDsFunc = func(ctx context.Context, softwareIDs []uint) ([]fleet.HostVulnerabilitySummary, error) {
 					return c.hosts, nil
 				}
 
@@ -180,8 +194,8 @@ func TestTriggerVulnerabilitiesWebhook(t *testing.T) {
 				err := TriggerVulnerabilitiesWebhook(ctx, ds, logger, args, &mapper)
 				require.NoError(t, err)
 
-				assert.True(t, ds.HostsBySoftwareIDsFuncInvoked)
-				ds.HostsBySoftwareIDsFuncInvoked = false
+				assert.True(t, ds.HostVulnSummariesBySoftwareIDsFuncInvoked)
+				ds.HostVulnSummariesBySoftwareIDsFuncInvoked = false
 
 				want := strings.Split(c.want, "\n")
 				assert.ElementsMatch(t, want, requests)

@@ -7,10 +7,13 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/fleetdm/fleet/v4/server/config"
+
 	"github.com/fleetdm/fleet/v4/server/contexts/viewer"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/websocket"
 	kitlog "github.com/go-kit/kit/log"
+	gws "github.com/gorilla/websocket"
 	"github.com/igm/sockjs-go/v3/sockjs"
 )
 
@@ -20,10 +23,21 @@ import (
 
 var reVersion = regexp.MustCompile(`\{fleetversion:\(\?:([^\}\)]+)\)\}`)
 
-func makeStreamDistributedQueryCampaignResultsHandler(svc fleet.Service, logger kitlog.Logger) func(string) http.Handler {
+func makeStreamDistributedQueryCampaignResultsHandler(config config.ServerConfig, svc fleet.Service, logger kitlog.Logger) func(string) http.Handler {
 	opt := sockjs.DefaultOptions
 	opt.Websocket = true
 	opt.RawWebsocket = true
+
+	if config.WebsocketsAllowUnsafeOrigin {
+		opt.CheckOrigin = func(r *http.Request) bool {
+			return true
+		}
+		// sockjs uses gorilla websockets under-the-hood see https://github.com/igm/sockjs-go/blob/master/v3/sockjs/rawwebsocket.go#L12-L14
+		opt.WebsocketUpgrader = &gws.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			}}
+	}
 
 	return func(path string) http.Handler {
 		// expand the path's versions (with regex) to all literal paths (no regex),
@@ -47,7 +61,7 @@ func makeStreamDistributedQueryCampaignResultsHandler(svc fleet.Service, logger 
 			defer func() {
 				if p := recover(); p != nil {
 					logger.Log("err", p, "msg", "panic in result handler")
-					conn.WriteJSONError("panic in result handler")
+					conn.WriteJSONError("panic in result handler") //nolint:errcheck
 				}
 				session.Close(0, "none")
 			}()
@@ -63,7 +77,7 @@ func makeStreamDistributedQueryCampaignResultsHandler(svc fleet.Service, logger 
 			vc, err := authViewer(context.Background(), string(token), svc)
 			if err != nil || !vc.CanPerformActions() {
 				logger.Log("err", err, "msg", "unauthorized viewer")
-				conn.WriteJSONError("unauthorized")
+				conn.WriteJSONError("unauthorized") //nolint:errcheck
 				return
 			}
 
@@ -72,12 +86,12 @@ func makeStreamDistributedQueryCampaignResultsHandler(svc fleet.Service, logger 
 			msg, err := conn.ReadJSONMessage()
 			if err != nil {
 				logger.Log("err", err, "msg", "reading select_campaign JSON")
-				conn.WriteJSONError("error reading select_campaign")
+				conn.WriteJSONError("error reading select_campaign") //nolint:errcheck
 				return
 			}
 			if msg.Type != "select_campaign" {
 				logger.Log("err", "unexpected msg type, expected select_campaign", "msg-type", msg.Type)
-				conn.WriteJSONError("expected select_campaign")
+				conn.WriteJSONError("expected select_campaign") //nolint:errcheck
 				return
 			}
 
@@ -87,12 +101,12 @@ func makeStreamDistributedQueryCampaignResultsHandler(svc fleet.Service, logger 
 			err = json.Unmarshal(*(msg.Data.(*json.RawMessage)), &info)
 			if err != nil {
 				logger.Log("err", err, "msg", "unmarshaling select_campaign data")
-				conn.WriteJSONError("error unmarshaling select_campaign data")
+				conn.WriteJSONError("error unmarshaling select_campaign data") //nolint:errcheck
 				return
 			}
 			if info.CampaignID == 0 {
 				logger.Log("err", "campaign ID not set")
-				conn.WriteJSONError("0 is not a valid campaign ID")
+				conn.WriteJSONError("0 is not a valid campaign ID") //nolint:errcheck
 				return
 			}
 

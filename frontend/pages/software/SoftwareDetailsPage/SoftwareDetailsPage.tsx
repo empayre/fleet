@@ -1,21 +1,23 @@
 import React, { useContext } from "react";
 import { useErrorHandler } from "react-error-boundary";
 import { useQuery } from "react-query";
-import { Link } from "react-router";
 import PATHS from "router/paths";
 
 import { AppContext } from "context/app";
-import { formatSoftwareType, ISoftware } from "interfaces/software";
-import softwareAPI, {
+import {
+  formatSoftwareType,
+  ISoftware,
   IGetSoftwareByIdResponse,
-} from "services/entities/software";
+} from "interfaces/software";
+import { APP_CONTEXT_NO_TEAM_ID } from "interfaces/team";
+import softwareAPI from "services/entities/software";
 import hostCountAPI from "services/entities/host_count";
 
+import { DEFAULT_EMPTY_CELL_VALUE } from "utilities/constants";
 import Spinner from "components/Spinner";
+import BackLink from "components/BackLink";
 import MainContent from "components/MainContent";
-import BackChevron from "../../../../assets/images/icon-chevron-down-9x6@2x.png";
-import RightChevron from "../../../../assets/images/icon-chevron-right-9x6@2x.png";
-
+import ViewAllHostsLink from "components/ViewAllHostsLink";
 import Vulnerabilities from "./components/Vulnerabilities";
 
 const baseClass = "software-details-page";
@@ -29,7 +31,13 @@ interface ISoftwareDetailsProps {
 const SoftwareDetailsPage = ({
   params: { software_id },
 }: ISoftwareDetailsProps): JSX.Element => {
-  const { isPremiumTier } = useContext(AppContext);
+  const {
+    isPremiumTier,
+    isSandboxMode,
+    currentTeam,
+    filteredSoftwarePath,
+  } = useContext(AppContext);
+
   const handlePageError = useErrorHandler();
 
   const { data: software, isFetching: isFetchingSoftware } = useQuery<
@@ -67,17 +75,21 @@ const SoftwareDetailsPage = ({
     return <Spinner />;
   }
 
+  // Function instead of constant eliminates race condition with filteredSoftwarePath
+  const backToSoftwarePath = () => {
+    if (filteredSoftwarePath) {
+      return filteredSoftwarePath;
+    }
+    return currentTeam && currentTeam?.id > APP_CONTEXT_NO_TEAM_ID
+      ? `${PATHS.MANAGE_SOFTWARE}?team_id=${currentTeam?.id}`
+      : PATHS.MANAGE_SOFTWARE;
+  };
+
   return (
     <MainContent className={baseClass}>
       <div className={`${baseClass}__wrapper`}>
         <div className={`${baseClass}__header-links`}>
-          <Link
-            to={PATHS.MANAGE_SOFTWARE}
-            className={`${baseClass}__back-link`}
-          >
-            <img src={BackChevron} alt="back chevron" id="back-chevron" />
-            <span>Back to software</span>
-          </Link>
+          <BackLink text="Back to software" path={backToSoftwarePath()} />
         </div>
         <div className="header title">
           <div className="title__inner">
@@ -85,13 +97,10 @@ const SoftwareDetailsPage = ({
               <h1 className="name">{renderName(software)}</h1>
             </div>
           </div>
-          <Link
-            to={`${PATHS.MANAGE_HOSTS}?software_id=${software_id}`}
+          <ViewAllHostsLink
+            queryParams={{ software_id }}
             className={`${baseClass}__hosts-link`}
-          >
-            <span>View all hosts</span>
-            <img src={RightChevron} alt="right chevron" id="right-chevron" />
-          </Link>
+          />
         </div>
         <div className="section info">
           <div className="info__inner">
@@ -104,13 +113,16 @@ const SoftwareDetailsPage = ({
               </div>
               <div className="info-flex__item info-flex__item--title">
                 <span className="info-flex__header">Hosts</span>
-                <span className={`info-flex__data`}>{hostCount || "---"}</span>
+                <span className={`info-flex__data`}>
+                  {hostCount || DEFAULT_EMPTY_CELL_VALUE}
+                </span>
               </div>
             </div>
           </div>
         </div>
         <Vulnerabilities
           isPremiumTier={isPremiumTier}
+          isSandboxMode={isSandboxMode}
           isLoading={isFetchingSoftware}
           software={software}
         />

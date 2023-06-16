@@ -10,3 +10,6 @@ import (
 func signalHandler(ctx context.Context) (execute func() error, interrupt func(error)) {
 	return run.SignalHandler(ctx, os.Interrupt, os.Kill)
 }
+
+func sigusrListener(rootDir string) {
+}

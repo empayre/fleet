@@ -1,4 +1,4 @@
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { IAceEditor } from "react-ace/lib/types";
 import { noop, size } from "lodash";
 import { useDebouncedCallback } from "use-debounce";
@@ -217,6 +217,7 @@ const LabelForm = ({
           hint={aceHintText}
           handleSubmit={noop}
           wrapEnabled
+          focus
         />
       )}
 

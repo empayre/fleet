@@ -6,6 +6,12 @@ import packInterface, { IPack } from "./pack";
 import softwareInterface, { ISoftware } from "./software";
 import hostQueryResult from "./campaign";
 import queryStatsInterface, { IQueryStats } from "./query_stats";
+import { ILicense, IDeviceGlobalConfig } from "./config";
+import {
+  IHostMacMdmProfile,
+  MdmEnrollmentStatus,
+  BootstrapPackageStatus,
+} from "./mdm";
 
 export default PropTypes.shape({
   created_at: PropTypes.string,
@@ -13,6 +19,7 @@ export default PropTypes.shape({
   id: PropTypes.number,
   detail_updated_at: PropTypes.string,
   label_updated_at: PropTypes.string,
+  policy_updated_at: PropTypes.string,
   last_enrolled_at: PropTypes.string,
   seen_time: PropTypes.string,
   refetch_requested: PropTypes.bool,
@@ -27,6 +34,7 @@ export default PropTypes.shape({
   uptime: PropTypes.number,
   memory: PropTypes.number,
   cpu_type: PropTypes.string,
+  cpu_subtype: PropTypes.string,
   cpu_brand: PropTypes.string,
   cpu_physical_cores: PropTypes.number,
   cpu_logical_cores: PropTypes.number,
@@ -60,6 +68,12 @@ export default PropTypes.shape({
   users: PropTypes.arrayOf(hostUserInterface),
   policies: PropTypes.arrayOf(hostPolicyInterface),
   query_results: PropTypes.arrayOf(hostQueryResult),
+  batteries: PropTypes.arrayOf(
+    PropTypes.shape({
+      cycle_count: PropTypes.number,
+      health: PropTypes.string,
+    })
+  ),
 });
 
 export type HostStatus = "online" | "offline" | "new" | "missing";
@@ -76,9 +90,36 @@ export interface IMunkiData {
   version: string;
 }
 
-export interface IMDMData {
-  enrollment_status: string;
-  server_url: string;
+type MacDiskEncryptionState =
+  | "applied"
+  | "action_required"
+  | "enforcing"
+  | "failed"
+  | "removing_enforcement"
+  | null;
+
+type MacDiskEncryptionActionRequired = "log_out" | "rotate_key" | null;
+
+interface IMdmMacOsSettings {
+  disk_encryption: MacDiskEncryptionState | null;
+  action_required: MacDiskEncryptionActionRequired | null;
+}
+
+interface IMdmMacOsSetup {
+  bootstrap_package_status: BootstrapPackageStatus | "";
+  details: string;
+  bootstrap_package_name: string;
+}
+
+export interface IHostMdmData {
+  encryption_key_available: boolean;
+  enrollment_status: MdmEnrollmentStatus | null;
+  name?: string;
+  server_url: string | null;
+  id?: number;
+  profiles: IHostMacMdmProfile[] | null;
+  macos_settings?: IMdmMacOsSettings;
+  macos_setup?: IMdmMacOsSetup;
 }
 
 export interface IMunkiIssue {
@@ -88,10 +129,17 @@ export interface IMunkiIssue {
   created_at: string;
 }
 
+interface IMacadminMDMData {
+  enrollment_status: MdmEnrollmentStatus | null;
+  name?: string;
+  server_url: string | null;
+  id?: number;
+}
+
 export interface IMacadminsResponse {
   macadmins: null | {
     munki: null | IMunkiData;
-    mobile_device_management: null | IMDMData;
+    mobile_device_management: null | IMacadminMDMData;
     munki_issues: IMunkiIssue[];
   };
 }
@@ -119,15 +167,43 @@ interface IGeoLocation {
   };
 }
 
+interface IBattery {
+  cycle_count: number;
+  health: string;
+}
+
+export interface IHostResponse {
+  host: IHost;
+}
+
+export interface IDeviceUserResponse {
+  host: IHostDevice;
+  license: ILicense;
+  org_logo_url: string;
+  disk_encryption_enabled?: boolean;
+  platform?: string;
+  global_config: IDeviceGlobalConfig;
+}
+
+export interface IHostEncrpytionKeyResponse {
+  host_id: number;
+  encryption_key: {
+    updated_at: string;
+    key: string;
+  };
+}
+
 export interface IHost {
   created_at: string;
   updated_at: string;
   id: number;
   detail_updated_at: string;
   label_updated_at: string;
+  policy_updated_at: string;
   last_enrolled_at: string;
   seen_time: string;
   refetch_requested: boolean;
+  refetch_critical_queries_until: string | null;
   hostname: string;
   uuid: string;
   platform: string;
@@ -139,6 +215,7 @@ export interface IHost {
   uptime: number;
   memory: number;
   cpu_type: string;
+  cpu_subtype: string;
   cpu_brand: string;
   cpu_physical_cores: number;
   cpu_logical_cores: number;
@@ -153,10 +230,10 @@ export interface IHost {
   distributed_interval: number;
   config_tls_refresh: number;
   logger_tls_period: number;
-  team_id: number;
-  pack_stats: IPackStats[];
-  team_name: string;
-  additional: object; // eslint-disable-line @typescript-eslint/ban-types
+  team_id: number | null;
+  pack_stats: IPackStats[] | null;
+  team_name: string | null;
+  additional?: object; // eslint-disable-line @typescript-eslint/ban-types
   percent_disk_space_available: number;
   gigs_disk_space_available: number;
   labels: ILabel[];
@@ -173,8 +250,18 @@ export interface IHost {
   users: IHostUser[];
   device_users?: IDeviceUser[];
   munki?: IMunkiData;
-  mdm?: IMDMData;
+  mdm: IHostMdmData;
   policies: IHostPolicy[];
   query_results?: unknown[];
   geolocation?: IGeoLocation;
+  batteries?: IBattery[];
+  disk_encryption_enabled?: boolean;
+}
+
+/*
+ * IHostDevice is an extension of IHost that is returned by the /devices endpoint. It includes the
+ * dep_assigned_to_fleet field, which is not returned by the /hosts endpoint.
+ */
+export interface IHostDevice extends IHost {
+  dep_assigned_to_fleet: boolean;
 }

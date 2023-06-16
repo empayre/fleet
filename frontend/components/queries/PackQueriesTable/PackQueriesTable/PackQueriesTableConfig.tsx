@@ -47,7 +47,7 @@ interface ICellProps extends IRowProps {
 
 interface IPillCellProps extends IRowProps {
   cell: {
-    value: [string, number];
+    value: { indicator: string; id: number };
   };
 }
 
@@ -263,7 +263,7 @@ const enhancePackQueriesData = (
     };
     return {
       id: query.id,
-      name: query.name,
+      name: query.query_name,
       interval: query.interval,
       pack_id: query.pack_id,
       platform: query.platform || undefined,

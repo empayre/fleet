@@ -52,7 +52,7 @@ func TestDatastoreReplica(t *testing.T) {
 			LabelUpdatedAt:  time.Now(),
 			PolicyUpdatedAt: time.Now(),
 			SeenTime:        time.Now(),
-			NodeKey:         "1",
+			NodeKey:         ptr.String("1"),
 			UUID:            "1",
 			Hostname:        "foo.local",
 			PrimaryIP:       "192.168.1.1",
@@ -90,6 +90,8 @@ func TestSanitizeColumn(t *testing.T) {
 		{"foobar*baz", "`foobarbaz`"},
 		{"....", ""},
 		{"h.id", "`h`.`id`"},
+		{"id;delete from hosts", "`iddeletefromhosts`"},
+		{"select * from foo", "`selectfromfoo`"},
 	}
 
 	for _, tt := range testCases {
@@ -216,7 +218,7 @@ func TestHostSearchLike(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run("", func(t *testing.T) {
-			sql, params := hostSearchLike(tt.inSQL, tt.inParams, tt.match, tt.columns...)
+			sql, params, _ := hostSearchLike(tt.inSQL, tt.inParams, tt.match, tt.columns...)
 			assert.Equal(t, tt.outSQL, sql)
 			assert.Equal(t, tt.outParams, params)
 		})
@@ -347,7 +349,7 @@ func TestAppendListOptionsToSQL(t *testing.T) {
 		OrderKey: "***name***",
 	}
 
-	actual := appendListOptionsToSQL(sql, opts)
+	actual := appendListOptionsToSQL(sql, &opts)
 	expected := "SELECT * FROM my_table ORDER BY `name` ASC LIMIT 1000000"
 	if actual != expected {
 		t.Error("Expected", expected, "Actual", actual)
@@ -355,7 +357,7 @@ func TestAppendListOptionsToSQL(t *testing.T) {
 
 	sql = "SELECT * FROM my_table"
 	opts.OrderDirection = fleet.OrderDescending
-	actual = appendListOptionsToSQL(sql, opts)
+	actual = appendListOptionsToSQL(sql, &opts)
 	expected = "SELECT * FROM my_table ORDER BY `name` DESC LIMIT 1000000"
 	if actual != expected {
 		t.Error("Expected", expected, "Actual", actual)
@@ -366,7 +368,7 @@ func TestAppendListOptionsToSQL(t *testing.T) {
 	}
 
 	sql = "SELECT * FROM my_table"
-	actual = appendListOptionsToSQL(sql, opts)
+	actual = appendListOptionsToSQL(sql, &opts)
 	expected = "SELECT * FROM my_table LIMIT 10"
 	if actual != expected {
 		t.Error("Expected", expected, "Actual", actual)
@@ -374,7 +376,7 @@ func TestAppendListOptionsToSQL(t *testing.T) {
 
 	sql = "SELECT * FROM my_table"
 	opts.Page = 2
-	actual = appendListOptionsToSQL(sql, opts)
+	actual = appendListOptionsToSQL(sql, &opts)
 	expected = "SELECT * FROM my_table LIMIT 10 OFFSET 20"
 	if actual != expected {
 		t.Error("Expected", expected, "Actual", actual)
@@ -382,7 +384,7 @@ func TestAppendListOptionsToSQL(t *testing.T) {
 
 	opts = fleet.ListOptions{}
 	sql = "SELECT * FROM my_table"
-	actual = appendListOptionsToSQL(sql, opts)
+	actual = appendListOptionsToSQL(sql, &opts)
 	expected = "SELECT * FROM my_table LIMIT 1000000"
 
 	if actual != expected {
@@ -642,7 +644,7 @@ func TestWithRetryTxWithRollback(t *testing.T) {
 func TestWithRetryTxWillRollbackWhenPanic(t *testing.T) {
 	mock, ds := mockDatastore(t)
 	defer ds.Close()
-	defer func() { recover() }()
+	defer func() { recover() }() //nolint:errcheck
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT 1").WillReturnError(errors.New("let's rollback!"))
@@ -674,7 +676,7 @@ func TestWithTxWithRollback(t *testing.T) {
 func TestWithTxWillRollbackWhenPanic(t *testing.T) {
 	mock, ds := mockDatastore(t)
 	defer ds.Close()
-	defer func() { recover() }()
+	defer func() { recover() }() //nolint:errcheck
 
 	mock.ExpectBegin()
 	mock.ExpectExec("SELECT 1").WillReturnError(errors.New("let's rollback!"))
@@ -977,7 +979,6 @@ func TestDebugs(t *testing.T) {
 }
 
 func TestANSIQuotesEnabled(t *testing.T) {
-
 	// Ensure sql_mode=ANSI_QUOTES is enabled for tests
 	ds := CreateMySQLDS(t)
 
@@ -985,4 +986,56 @@ func TestANSIQuotesEnabled(t *testing.T) {
 	err := ds.writer.GetContext(context.Background(), &sqlMode, `SELECT @@SQL_MODE`)
 	require.NoError(t, err)
 	require.Contains(t, sqlMode, "ANSI_QUOTES")
+}
+
+func Test_buildWildcardMatchPhrase(t *testing.T) {
+	type args struct {
+		matchQuery string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: "",
+			args: args{matchQuery: "test"},
+			want: "%test%",
+		},
+		{
+			name: "underscores are escaped",
+			args: args{matchQuery: "Host_1"},
+			want: "%Host\\_1%",
+		},
+		{
+			name: "percent are escaped",
+			args: args{matchQuery: "Host%1"},
+			want: "%Host\\%1%",
+		},
+		{
+			name: "percent & underscore are escaped",
+			args: args{matchQuery: "Host_%1"},
+			want: "%Host\\_\\%1%",
+		},
+		{
+			name: "underscores added for wildcard search are not escaped",
+			args: args{matchQuery: "Alice‘s MacbookPro"},
+			want: "%Alice_s MacbookPro%",
+		},
+		{
+			name: "underscores added for wildcard search are not escaped, but underscores in matchQuery are",
+			args: args{matchQuery: "Alice‘s Macbook_Pro"},
+			want: "%Alice_s Macbook\\_Pro%",
+		},
+		{
+			name: "multiple occurances of wildcard are not escaped",
+			args: args{matchQuery: "Alice‘‘s Macbook_Pro"},
+			want: "%Alice__s Macbook\\_Pro%",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, buildWildcardMatchPhrase(tt.args.matchQuery), "buildWildcardMatchPhrase(%v)", tt.args.matchQuery)
+		})
+	}
 }

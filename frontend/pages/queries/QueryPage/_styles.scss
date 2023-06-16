@@ -64,22 +64,6 @@
     }
   }
 
-  &__back-link {
-    display: flex;
-    align-items: center;
-    height: 20px;
-    font-size: $x-small;
-    color: $core-vibrant-blue;
-    font-weight: $bold;
-    text-decoration: none;
-
-    #back-chevron {
-      width: 16px;
-      height: 16px;
-      margin: 0 $pad-small 0 0;
-    }
-  }
-
   .ace_content {
     min-height: 500px !important;
   }
@@ -127,7 +111,7 @@
         .selector-count {
           margin-left: 8px;
           font-size: $xxx-small;
-          font-weight: 700;
+          font-weight: $bold;
         }
         &[data-selected="true"] {
           background-color: $ui-vibrant-blue-10;
@@ -152,7 +136,7 @@
     align-items: center;
 
     span {
-      font-weight: 700;
+      font-weight: $bold;
     }
 
     .icon-tooltip {

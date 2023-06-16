@@ -140,7 +140,7 @@ func (ds *Datastore) GetLabelSpecs(ctx context.Context) ([]*fleet.LabelSpec, err
 func (ds *Datastore) GetLabelSpec(ctx context.Context, name string) (*fleet.LabelSpec, error) {
 	var specs []*fleet.LabelSpec
 	query := `
-SELECT name, description, query, platform, label_type, label_membership_type
+SELECT id, name, description, query, platform, label_type, label_membership_type
 FROM labels
 WHERE name = ?
 `
@@ -289,7 +289,7 @@ func (ds *Datastore) ListLabels(ctx context.Context, filter fleet.TeamFilter, op
 		`, ds.whereFilterHostsByTeams(filter, "h"),
 	)
 
-	query = appendListOptionsToSQL(query, opt)
+	query = appendListOptionsToSQL(query, &opt)
 	labels := []*fleet.Label{}
 
 	if err := sqlx.SelectContext(ctx, ds.reader, &labels, query); err != nil {
@@ -497,24 +497,28 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
       h.label_updated_at,
       h.last_enrolled_at,
       h.refetch_requested,
+      h.refetch_critical_queries_until,
       h.team_id,
       h.policy_updated_at,
       h.public_ip,
       COALESCE(hd.gigs_disk_space_available, 0) as gigs_disk_space_available,
       COALESCE(hd.percent_disk_space_available, 0) as percent_disk_space_available,
       COALESCE(hst.seen_time, h.created_at) as seen_time,
+      COALESCE(hu.software_updated_at, h.created_at) AS software_updated_at,
       (SELECT name FROM teams t WHERE t.id = h.team_id) AS team_name
+      %s
       %s
     FROM label_membership lm
     JOIN hosts h ON (lm.host_id = h.id)
     LEFT JOIN host_seen_times hst ON (h.id=hst.host_id)
+    LEFT JOIN host_updates hu ON (h.id = hu.host_id)
     LEFT JOIN host_disks hd ON (h.id=hd.host_id)
     %s
     %s
-	`
+`
 	failingPoliciesSelect := `,
-		coalesce(failing_policies.count, 0) as failing_policies_count,
-		coalesce(failing_policies.count, 0) as total_issues_count
+		COALESCE(failing_policies.count, 0) AS failing_policies_count,
+		COALESCE(failing_policies.count, 0) AS total_issues_count
 	`
 	failingPoliciesJoin := `LEFT JOIN (
 		SELECT host_id, count(*) as count FROM policy_membership WHERE passes = 0
@@ -526,12 +530,7 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
 		failingPoliciesJoin = ""
 	}
 
-	displayNameJoin := ""
-	if opt.ListOptions.OrderKey == "display_name" {
-		displayNameJoin = ` JOIN host_display_names hdn ON h.id = hdn.host_id `
-	}
-
-	query := fmt.Sprintf(queryFmt, failingPoliciesSelect, failingPoliciesJoin, displayNameJoin)
+	query := fmt.Sprintf(queryFmt, hostMDMSelect, failingPoliciesSelect, hostMDMJoin, failingPoliciesJoin)
 
 	query, params := ds.applyHostLabelFilters(filter, lid, query, opt)
 
@@ -547,12 +546,25 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
 func (ds *Datastore) applyHostLabelFilters(filter fleet.TeamFilter, lid uint, query string, opt fleet.HostListOptions) (string, []interface{}) {
 	params := []interface{}{lid}
 
+	if opt.ListOptions.OrderKey == "display_name" {
+		query += ` JOIN host_display_names hdn ON h.id = hdn.host_id `
+	}
+
 	query += fmt.Sprintf(` WHERE lm.label_id = ? AND %s `, ds.whereFilterHostsByTeams(filter, "h"))
+	if opt.LowDiskSpaceFilter != nil {
+		query += ` AND hd.gigs_disk_space_available < ? `
+		params = append(params, *opt.LowDiskSpaceFilter)
+	}
+
 	query, params = filterHostsByStatus(ds.clock.Now(), query, opt, params)
 	query, params = filterHostsByTeam(query, opt, params)
+	query, params = filterHostsByMDM(query, opt, params)
+	query, params = filterHostsByMacOSSettingsStatus(query, opt, params)
+	query, params = filterHostsByMacOSDiskEncryptionStatus(query, opt, params)
+	query, params = filterHostsByMDMBootstrapPackageStatus(query, opt, params)
 	query, params = searchLike(query, params, opt.MatchQuery, hostSearchColumns...)
 
-	query = appendListOptionsToSQL(query, opt.ListOptions)
+	query = appendListOptionsToSQL(query, &opt.ListOptions)
 	return query, params
 }
 
@@ -560,14 +572,14 @@ func (ds *Datastore) CountHostsInLabel(ctx context.Context, filter fleet.TeamFil
 	query := `SELECT count(*) FROM label_membership lm
     JOIN hosts h ON (lm.host_id = h.id)
 	LEFT JOIN host_seen_times hst ON (h.id=hst.host_id)
-	%s`
+ 	`
 
-	displayNameJoin := ""
-	if opt.ListOptions.OrderKey == "display_name" {
-		displayNameJoin = ` JOIN host_display_names hdn ON h.id = hdn.host_id `
+	query += hostMDMJoin
+
+	if opt.LowDiskSpaceFilter != nil {
+		query += ` LEFT JOIN host_disks hd ON (h.id=hd.host_id) `
 	}
 
-	query = fmt.Sprintf(query, displayNameJoin)
 	query, params := ds.applyHostLabelFilters(filter, lid, query, opt)
 
 	var count int
@@ -620,6 +632,7 @@ func (ds *Datastore) ListUniqueHostsInLabels(ctx context.Context, filter fleet.T
         h.label_updated_at,
         h.last_enrolled_at,
         h.refetch_requested,
+        h.refetch_critical_queries_until,
         h.team_id,
         h.policy_updated_at,
         h.public_ip,
@@ -630,7 +643,7 @@ func (ds *Datastore) ListUniqueHostsInLabels(ctx context.Context, filter fleet.T
       JOIN hosts h ON lm.host_id = h.id
       LEFT JOIN host_disks hd ON hd.host_id = h.id
       WHERE lm.label_id IN (?) AND %s
-		`, ds.whereFilterHostsByTeams(filter, "h"),
+`, ds.whereFilterHostsByTeams(filter, "h"),
 	)
 
 	query, args, err := sqlx.In(sqlStatement, labels)

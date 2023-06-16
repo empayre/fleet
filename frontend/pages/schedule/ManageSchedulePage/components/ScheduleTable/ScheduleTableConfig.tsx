@@ -54,7 +54,7 @@ interface INumberCellProps extends IRowProps {
 
 interface IPillCellProps extends IRowProps {
   cell: {
-    value: [string, number];
+    value: { indicator: string; id: number };
   };
 }
 
@@ -121,7 +121,7 @@ const generateTableHeaders = (
       disableSortBy: true,
       accessor: "query_name",
       Cell: (cellProps: ICellProps): JSX.Element => (
-        <TextCell classes="w400" value={cellProps.cell.value} />
+        <TextCell value={cellProps.cell.value} />
       ),
     },
     {
@@ -250,10 +250,10 @@ const enhanceAllScheduledQueryData = (
       version: scheduledQuery.version,
       shard: scheduledQuery.shard,
       type: teamId ? "team_scheduled_query" : "global_scheduled_query",
-      performance: [
-        performanceIndicator(scheduledQueryPerformance),
-        scheduledQuery.id,
-      ],
+      performance: {
+        indicator: performanceIndicator(scheduledQueryPerformance),
+        id: scheduledQuery.id,
+      },
     };
   });
 };

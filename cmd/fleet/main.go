@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/fleetdm/fleet/v4/server/config"
+	kitlog "github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +23,7 @@ func main() {
 
 	configManager := config.NewManager(rootCmd)
 
+	rootCmd.AddCommand(createVulnProcessingCmd(configManager))
 	rootCmd.AddCommand(createPrepareCmd(configManager))
 	rootCmd.AddCommand(createServeCmd(configManager))
 	rootCmd.AddCommand(createConfigDumpCmd(configManager))
@@ -69,6 +72,17 @@ func applyDevFlags(cfg *config.FleetConfig) {
 		cfg.Prometheus.BasicAuth.Password = "insecure"
 	}
 
+	cfg.S3 = config.S3Config{
+		Bucket:           "carves-dev",
+		Region:           "minio",
+		Prefix:           "dev-prefix",
+		EndpointURL:      "localhost:9000",
+		AccessKeyID:      "minio",
+		SecretAccessKey:  "minio123!",
+		DisableSSL:       true,
+		ForceS3PathStyle: true,
+	}
+
 	cfg.Packaging.S3 = config.S3Config{
 		Bucket:           "installers-dev",
 		Region:           "minio",
@@ -79,4 +93,23 @@ func applyDevFlags(cfg *config.FleetConfig) {
 		DisableSSL:       true,
 		ForceS3PathStyle: true,
 	}
+}
+
+func initLogger(cfg config.FleetConfig) kitlog.Logger {
+	var logger kitlog.Logger
+	{
+		output := os.Stderr
+		if cfg.Logging.JSON {
+			logger = kitlog.NewJSONLogger(output)
+		} else {
+			logger = kitlog.NewLogfmtLogger(output)
+		}
+		if cfg.Logging.Debug {
+			logger = level.NewFilter(logger, level.AllowDebug())
+		} else {
+			logger = level.NewFilter(logger, level.AllowInfo())
+		}
+		logger = kitlog.With(logger, "ts", kitlog.DefaultTimestampUTC)
+	}
+	return logger
 }

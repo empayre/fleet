@@ -23,9 +23,11 @@ import (
 	"github.com/e-dard/netbug"
 	"github.com/fleetdm/fleet/v4/ee/server/licensing"
 	eeservice "github.com/fleetdm/fleet/v4/ee/server/service"
+	"github.com/fleetdm/fleet/v4/pkg/certificate"
 	"github.com/fleetdm/fleet/v4/server"
 	configpkg "github.com/fleetdm/fleet/v4/server/config"
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
+	licensectx "github.com/fleetdm/fleet/v4/server/contexts/license"
 	"github.com/fleetdm/fleet/v4/server/datastore/cached_mysql"
 	"github.com/fleetdm/fleet/v4/server/datastore/mysql"
 	"github.com/fleetdm/fleet/v4/server/datastore/mysqlredis"
@@ -38,8 +40,7 @@ import (
 	"github.com/fleetdm/fleet/v4/server/live_query"
 	"github.com/fleetdm/fleet/v4/server/logging"
 	"github.com/fleetdm/fleet/v4/server/mail"
-	config_apple "github.com/fleetdm/fleet/v4/server/mdm/apple/config"
-	"github.com/fleetdm/fleet/v4/server/mdm/apple/scep/scep_mysql"
+	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
 	"github.com/fleetdm/fleet/v4/server/pubsub"
 	"github.com/fleetdm/fleet/v4/server/service"
 	"github.com/fleetdm/fleet/v4/server/service/async"
@@ -49,15 +50,17 @@ import (
 	kitlog "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	kitprometheus "github.com/go-kit/kit/metrics/prometheus"
+	"github.com/go-kit/log"
 	"github.com/kolide/kit/version"
 	"github.com/micromdm/nanomdm/cryptoutil"
+	"github.com/micromdm/nanomdm/push"
 	"github.com/micromdm/nanomdm/push/buford"
 	nanomdm_pushsvc "github.com/micromdm/nanomdm/push/service"
+	scep_depot "github.com/micromdm/scep/v2/depot"
 	"github.com/ngrok/sqlmw"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
-	"go.elastic.co/apm/module/apmhttp"
 	_ "go.elastic.co/apm/module/apmsql"
 	_ "go.elastic.co/apm/module/apmsql/mysql"
 	"go.opentelemetry.io/otel"
@@ -103,15 +106,7 @@ the way that the Fleet server works.
 				applyDevFlags(&config)
 			}
 
-			if devLicense {
-				// This license key is valid for development only
-				config.License.Key = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNzUxMjQxNjAwLCJzdWIiOiJkZXZlbG9wbWVudC1vbmx5IiwiZGV2aWNlcyI6MTAwLCJub3RlIjoiZm9yIGRldmVsb3BtZW50IG9ubHkiLCJ0aWVyIjoicHJlbWl1bSIsImlhdCI6MTY1NjY5NDA4N30.dvfterOvfTGdrsyeWYH9_lPnyovxggM5B7tkSl1q1qgFYk_GgOIxbaqIZ6gJlL0cQuBF9nt5NgV0AUT9RmZUaA"
-			} else if devExpiredLicense {
-				// An expired license key
-				config.License.Key = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNjI5NzYzMjAwLCJzdWIiOiJEZXYgbGljZW5zZSAoZXhwaXJlZCkiLCJkZXZpY2VzIjo1MDAwMDAsIm5vdGUiOiJUaGlzIGxpY2Vuc2UgaXMgdXNlZCB0byBmb3IgZGV2ZWxvcG1lbnQgcHVycG9zZXMuIiwidGllciI6ImJhc2ljIiwiaWF0IjoxNjI5OTA0NzMyfQ.AOppRkl1Mlc_dYKH9zwRqaTcL0_bQzs7RM3WSmxd3PeCH9CxJREfXma8gm0Iand6uIWw8gHq5Dn0Ivtv80xKvQ"
-			}
-
-			license, err := licensing.LoadLicense(config.License.Key)
+			license, err := initLicense(config, devLicense, devExpiredLicense)
 			if err != nil {
 				initFatal(
 					err,
@@ -123,21 +118,7 @@ the way that the Fleet server works.
 				fleet.WriteExpiredLicenseBanner(os.Stderr)
 			}
 
-			var logger kitlog.Logger
-			{
-				output := os.Stderr
-				if config.Logging.JSON {
-					logger = kitlog.NewJSONLogger(output)
-				} else {
-					logger = kitlog.NewLogfmtLogger(output)
-				}
-				if config.Logging.Debug {
-					logger = level.NewFilter(logger, level.AllowDebug())
-				} else {
-					logger = level.NewFilter(logger, level.AllowInfo())
-				}
-				logger = kitlog.With(logger, "ts", kitlog.DefaultTimestampUTC)
-			}
+			logger := initLogger(config)
 
 			// Init tracing
 			if config.Logging.TracingEnabled {
@@ -182,13 +163,12 @@ the way that the Fleet server works.
 			var ds fleet.Datastore
 			var carveStore fleet.CarveStore
 			var installerStore fleet.InstallerStore
-			mailService := mail.NewService()
 
 			opts := []mysql.DBOption{mysql.Logger(logger), mysql.WithFleetConfig(&config)}
 			if config.MysqlReadReplica.Address != "" {
 				opts = append(opts, mysql.Replica(&config.MysqlReadReplica))
 			}
-			if dev && os.Getenv("FLEET_ENABLE_DEV_SQL_INTERCEPTOR") != "" {
+			if dev && os.Getenv("FLEET_DEV_ENABLE_SQL_INTERCEPTOR") != "" {
 				opts = append(opts, mysql.WithInterceptor(&devSQLInterceptor{
 					logger: kitlog.With(logger, "component", "sql-interceptor"),
 				}))
@@ -305,12 +285,15 @@ the way that the Fleet server works.
 						os.Exit(1)
 					}
 				} else {
-					ds.ApplyEnrollSecrets(cmd.Context(), nil, []*fleet.EnrollSecret{{Secret: config.Packaging.GlobalEnrollSecret}})
+					if err := ds.ApplyEnrollSecrets(cmd.Context(), nil, []*fleet.EnrollSecret{{Secret: config.Packaging.GlobalEnrollSecret}}); err != nil {
+						level.Debug(logger).Log("err", err, "msg", "failed to apply enroll secrets")
+					}
 				}
 			}
 
 			redisPool, err := redis.NewPool(redis.PoolConfig{
 				Server:                    config.Redis.Address,
+				Username:                  config.Redis.Username,
 				Password:                  config.Redis.Password,
 				Database:                  config.Redis.Database,
 				UseTLS:                    config.Redis.UseTLS,
@@ -345,13 +328,97 @@ the way that the Fleet server works.
 			redisWrapperDS := mysqlredis.New(ds, redisPool, dsOpts...)
 			ds = redisWrapperDS
 
-			resultStore := pubsub.NewRedisQueryResults(redisPool, config.Redis.DuplicateResults)
+			resultStore := pubsub.NewRedisQueryResults(redisPool, config.Redis.DuplicateResults,
+				log.With(logger, "component", "query-results"),
+			)
 			liveQueryStore := live_query.NewRedisLiveQuery(redisPool)
 			ssoSessionStore := sso.NewSessionStore(redisPool)
 
-			osqueryLogger, err := logging.New(config, logger)
+			// Set common configuration for all logging.
+			loggingConfig := logging.Config{
+				Filesystem: logging.FilesystemConfig{
+					EnableLogRotation:    config.Filesystem.EnableLogRotation,
+					EnableLogCompression: config.Filesystem.EnableLogCompression,
+					MaxSize:              config.Filesystem.MaxSize,
+					MaxAge:               config.Filesystem.MaxAge,
+					MaxBackups:           config.Filesystem.MaxBackups,
+				},
+				Firehose: logging.FirehoseConfig{
+					Region:           config.Firehose.Region,
+					EndpointURL:      config.Firehose.EndpointURL,
+					AccessKeyID:      config.Firehose.AccessKeyID,
+					SecretAccessKey:  config.Firehose.SecretAccessKey,
+					StsAssumeRoleArn: config.Firehose.StsAssumeRoleArn,
+				},
+				Kinesis: logging.KinesisConfig{
+					Region:           config.Kinesis.Region,
+					EndpointURL:      config.Kinesis.EndpointURL,
+					AccessKeyID:      config.Kinesis.AccessKeyID,
+					SecretAccessKey:  config.Kinesis.SecretAccessKey,
+					StsAssumeRoleArn: config.Kinesis.StsAssumeRoleArn,
+				},
+				Lambda: logging.LambdaConfig{
+					Region:           config.Lambda.Region,
+					AccessKeyID:      config.Lambda.AccessKeyID,
+					SecretAccessKey:  config.Lambda.SecretAccessKey,
+					StsAssumeRoleArn: config.Lambda.StsAssumeRoleArn,
+				},
+				PubSub: logging.PubSubConfig{
+					Project: config.PubSub.Project,
+				},
+				KafkaREST: logging.KafkaRESTConfig{
+					ProxyHost:        config.KafkaREST.ProxyHost,
+					ContentTypeValue: config.KafkaREST.ContentTypeValue,
+					Timeout:          config.KafkaREST.Timeout,
+				},
+			}
+
+			// Set specific configuration to osqueryd status logs.
+			loggingConfig.Plugin = config.Osquery.StatusLogPlugin
+			loggingConfig.Filesystem.LogFile = config.Filesystem.StatusLogFile
+			loggingConfig.Firehose.StreamName = config.Firehose.StatusStream
+			loggingConfig.Kinesis.StreamName = config.Kinesis.StatusStream
+			loggingConfig.Lambda.Function = config.Lambda.StatusFunction
+			loggingConfig.PubSub.Topic = config.PubSub.StatusTopic
+			loggingConfig.PubSub.AddAttributes = false // only used by result logs
+			loggingConfig.KafkaREST.Topic = config.KafkaREST.StatusTopic
+
+			osquerydStatusLogger, err := logging.NewJSONLogger("status", loggingConfig, logger)
 			if err != nil {
-				initFatal(err, "initializing osquery logging")
+				initFatal(err, "initializing osqueryd status logging")
+			}
+
+			// Set specific configuration to osqueryd result logs.
+			loggingConfig.Plugin = config.Osquery.ResultLogPlugin
+			loggingConfig.Filesystem.LogFile = config.Filesystem.ResultLogFile
+			loggingConfig.Firehose.StreamName = config.Firehose.ResultStream
+			loggingConfig.Kinesis.StreamName = config.Kinesis.ResultStream
+			loggingConfig.Lambda.Function = config.Lambda.ResultFunction
+			loggingConfig.PubSub.Topic = config.PubSub.ResultTopic
+			loggingConfig.PubSub.AddAttributes = config.PubSub.AddAttributes
+			loggingConfig.KafkaREST.Topic = config.KafkaREST.ResultTopic
+
+			osquerydResultLogger, err := logging.NewJSONLogger("result", loggingConfig, logger)
+			if err != nil {
+				initFatal(err, "initializing osqueryd result logging")
+			}
+
+			var auditLogger fleet.JSONLogger
+			if license.IsPremium() && config.Activity.EnableAuditLog {
+				// Set specific configuration to audit logs.
+				loggingConfig.Plugin = config.Activity.AuditLogPlugin
+				loggingConfig.Filesystem.LogFile = config.Filesystem.AuditLogFile
+				loggingConfig.Firehose.StreamName = config.Firehose.AuditStream
+				loggingConfig.Kinesis.StreamName = config.Kinesis.AuditStream
+				loggingConfig.Lambda.Function = config.Lambda.AuditFunction
+				loggingConfig.PubSub.Topic = config.PubSub.AuditTopic
+				loggingConfig.PubSub.AddAttributes = false // only used by result logs
+				loggingConfig.KafkaREST.Topic = config.KafkaREST.AuditTopic
+
+				auditLogger, err = logging.NewJSONLogger("audit", loggingConfig, logger)
+				if err != nil {
+					initFatal(err, "initializing audit logging")
+				}
 			}
 
 			failingPolicySet := redis_policy_set.NewFailing(redisPool)
@@ -385,45 +452,126 @@ the way that the Fleet server works.
 			}
 
 			var (
-				scepStorage      *scep_mysql.MySQLDepot
-				depStorage       *mysql.NanoDEPStorage
-				mdmStorage       *mysql.NanoMDMStorage
-				mdmPushService   *nanomdm_pushsvc.PushService
-				mdmPushCertTopic string
+				scepStorage                 scep_depot.Depot
+				appleSCEPCertPEM            []byte
+				appleSCEPKeyPEM             []byte
+				appleAPNsCertPEM            []byte
+				appleAPNsKeyPEM             []byte
+				depStorage                  *mysql.NanoDEPStorage
+				mdmStorage                  *mysql.NanoMDMStorage
+				mdmPushService              push.Pusher
+				mdmCheckinAndCommandService *service.MDMAppleCheckinAndCommandService
+				mdmPushCertTopic            string
 			)
-			if config.MDMApple.Enable {
-				if err := config_apple.Verify(config.MDMApple); err != nil {
-					initFatal(err, "verify apple mdm config")
+
+			// validate Apple APNs/SCEP config
+			if config.MDM.IsAppleAPNsSet() || config.MDM.IsAppleSCEPSet() {
+				if !config.MDM.IsAppleAPNsSet() {
+					initFatal(errors.New("Apple APNs MDM configuration must be provided when Apple SCEP is provided"), "validate Apple MDM")
+				} else if !config.MDM.IsAppleSCEPSet() {
+					initFatal(errors.New("Apple SCEP MDM configuration must be provided when Apple APNs is provided"), "validate Apple MDM")
 				}
-				scepStorage, err = mds.NewMDMAppleSCEPDepot(
-					[]byte(config.MDMApple.SCEP.CA.PEMCert),
-					[]byte(config.MDMApple.SCEP.CA.PEMKey),
+
+				apnsCert, apnsCertPEM, apnsKeyPEM, err := config.MDM.AppleAPNs()
+				if err != nil {
+					initFatal(err, "validate Apple APNs certificate and key")
+				}
+				appleAPNsCertPEM, appleAPNsKeyPEM = apnsCertPEM, apnsKeyPEM
+
+				mdmPushCertTopic, err = cryptoutil.TopicFromCert(apnsCert.Leaf)
+				if err != nil {
+					initFatal(err, "validate Apple APNs certificate: failed to get topic from certificate")
+				}
+
+				_, appleSCEPCertPEM, appleSCEPKeyPEM, err = config.MDM.AppleSCEP()
+				if err != nil {
+					initFatal(err, "validate Apple SCEP certificate and key")
+				}
+
+				const (
+					apnsConnectionTimeout = 10 * time.Second
+					apnsConnectionURL     = "https://api.sandbox.push.apple.com"
 				)
+
+				// check that the Apple APNs certificate is valid to connect to the API
+				ctx, cancel := context.WithTimeout(context.Background(), apnsConnectionTimeout)
+				if err := certificate.ValidateClientAuthTLSConnection(ctx, apnsCert, apnsConnectionURL); err != nil {
+					initFatal(err, "validate authentication with Apple APNs certificate")
+				}
+				cancel()
+			}
+
+			appCfg, err := ds.AppConfig(context.Background())
+			if err != nil {
+				initFatal(err, "loading app config")
+			}
+			// assume MDM is disabled until we verify that
+			// everything is properly configured below
+			appCfg.MDM.EnabledAndConfigured = false
+			appCfg.MDM.AppleBMEnabledAndConfigured = false
+
+			// validate Apple BM config
+			if config.MDM.IsAppleBMSet() {
+				if !license.IsPremium() {
+					initFatal(errors.New("Apple Business Manager configuration is only available in Fleet Premium"), "validate Apple BM")
+				}
+
+				tok, err := config.MDM.AppleBM()
+				if err != nil {
+					initFatal(err, "validate Apple BM token, certificate and key")
+				}
+				depStorage, err = mds.NewMDMAppleDEPStorage(*tok)
+				if err != nil {
+					initFatal(err, "initialize Apple BM DEP storage")
+				}
+				appCfg.MDM.AppleBMEnabledAndConfigured = true
+			}
+
+			if config.MDM.IsAppleAPNsSet() && config.MDM.IsAppleSCEPSet() {
+				scepStorage, err = mds.NewSCEPDepot(appleSCEPCertPEM, appleSCEPKeyPEM)
 				if err != nil {
 					initFatal(err, "initialize mdm apple scep storage")
 				}
-				mdmStorage, err = mds.NewMDMAppleMDMStorage(
-					[]byte(config.MDMApple.MDM.PushCert.PEMCert),
-					[]byte(config.MDMApple.MDM.PushCert.PEMKey),
-				)
+				mdmStorage, err = mds.NewMDMAppleMDMStorage(appleAPNsCertPEM, appleAPNsKeyPEM)
 				if err != nil {
 					initFatal(err, "initialize mdm apple MySQL storage")
 				}
-				mdmPushCertTopic, err = cryptoutil.TopicFromPEMCert([]byte(config.MDMApple.MDM.PushCert.PEMCert))
-				if err != nil {
-					initFatal(err, "extract topic from mdm push certificate")
-				}
-				depStorage, err = mds.NewMDMAppleDEPStorage([]byte(config.MDMApple.DEP.Token))
-				if err != nil {
-					initFatal(err, "initialize mdm apple dep storage")
-				}
-				nanoMDMLogger := NewNanoMDMLogger(kitlog.With(logger, "component", "apple-mdm-push"))
+				nanoMDMLogger := service.NewNanoMDMLogger(kitlog.With(logger, "component", "apple-mdm-push"))
 				pushProviderFactory := buford.NewPushProviderFactory()
-				mdmPushService = nanomdm_pushsvc.New(mdmStorage, mdmStorage, pushProviderFactory, nanoMDMLogger)
+				if os.Getenv("FLEET_DEV_MDM_APPLE_DISABLE_PUSH") == "1" {
+					mdmPushService = nopPusher{}
+				} else {
+					mdmPushService = nanomdm_pushsvc.New(mdmStorage, mdmStorage, pushProviderFactory, nanoMDMLogger)
+				}
+				commander := apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService)
+				mdmCheckinAndCommandService = service.NewMDMAppleCheckinAndCommandService(ds, commander, logger)
+				appCfg.MDM.EnabledAndConfigured = true
 			}
 
-			ctx, cancelFunc := context.WithCancel(context.Background())
-			defer cancelFunc() // TODO(sarah); Handle release of locks in graceful shutdown
+			// save the app config with the updated MDM.Enabled value
+			if err := ds.SaveAppConfig(context.Background(), appCfg); err != nil {
+				initFatal(err, "saving app config")
+			}
+
+			// setup mail service
+			if appCfg.SMTPSettings != nil && appCfg.SMTPSettings.SMTPEnabled {
+				// if SMTP is already enabled then default the backend to empty string, which fill force load the SMTP implementation
+				if config.Email.EmailBackend != "" {
+					config.Email.EmailBackend = ""
+					level.Warn(logger).Log("msg", "SMTP is already enabled, first disable SMTP to utilize a different email backend")
+				}
+			}
+			mailService, err := mail.NewService(config)
+			if err != nil {
+				level.Error(logger).Log("err", err, "msg", "failed to configure mailing service")
+			}
+
+			cronSchedules := fleet.NewCronSchedules()
+
+			baseCtx := licensectx.NewContext(context.Background(), license)
+			ctx, cancelFunc := context.WithCancel(baseCtx)
+			defer cancelFunc()
+
 			eh := errorstore.NewHandler(ctx, redisPool, logger, config.Logging.ErrorRetentionPeriod)
 			ctx = ctxerr.NewContext(ctx, eh)
 			svc, err := service.NewService(
@@ -432,7 +580,10 @@ the way that the Fleet server works.
 				task,
 				resultStore,
 				logger,
-				osqueryLogger,
+				&service.OsqueryLogger{
+					Status: osquerydStatusLogger,
+					Result: osquerydResultLogger,
+				},
 				config,
 				mailService,
 				clock.C,
@@ -440,7 +591,6 @@ the way that the Fleet server works.
 				liveQueryStore,
 				carveStore,
 				installerStore,
-				*license,
 				failingPolicySet,
 				geoIP,
 				redisWrapperDS,
@@ -448,13 +598,31 @@ the way that the Fleet server works.
 				mdmStorage,
 				mdmPushService,
 				mdmPushCertTopic,
+				cronSchedules,
 			)
 			if err != nil {
 				initFatal(err, "initializing service")
 			}
 
 			if license.IsPremium() {
-				svc, err = eeservice.NewService(svc, ds, logger, config, mailService, clock.C, license)
+				var profileMatcher fleet.ProfileMatcher
+				if appCfg.MDM.EnabledAndConfigured {
+					profileMatcher = apple_mdm.NewProfileMatcher(redisPool)
+				}
+
+				svc, err = eeservice.NewService(
+					svc,
+					ds,
+					logger,
+					config,
+					mailService,
+					clock.C,
+					depStorage,
+					apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService),
+					mdmPushCertTopic,
+					ssoSessionStore,
+					profileMatcher,
+				)
 				if err != nil {
 					initFatal(err, "initial Fleet Premium service")
 				}
@@ -464,19 +632,106 @@ the way that the Fleet server works.
 			if err != nil {
 				initFatal(errors.New("Error generating random instance identifier"), "")
 			}
+			level.Info(logger).Log("instanceID", instanceID)
 
-			startCleanupsAndAggregationSchedule(ctx, instanceID, ds, logger, redisWrapperDS)
-			startSendStatsSchedule(ctx, instanceID, ds, config, license, logger)
-			startVulnerabilitiesSchedule(ctx, instanceID, ds, logger, &config.Vulnerabilities, license)
-			if _, err := startAutomationsSchedule(ctx, instanceID, ds, logger, 5*time.Minute, failingPolicySet); err != nil {
+			// Perform a cleanup of cron_stats outside of the cronSchedules because the
+			// schedule package uses cron_stats entries to decide whether a schedule will
+			// run or not (see https://github.com/fleetdm/fleet/issues/9486).
+			go func() {
+				cleanupCronStats := func() {
+					level.Debug(logger).Log("msg", "cleaning up cron_stats")
+					// Datastore.CleanupCronStats should be safe to run by multiple fleet
+					// instances at the same time and it should not be an expensive operation.
+					if err := ds.CleanupCronStats(ctx); err != nil {
+						level.Info(logger).Log("msg", "failed to clean up cron_stats", "err", err)
+					}
+				}
+
+				cleanupCronStats()
+
+				cleanUpCronStatsTick := time.NewTicker(1 * time.Hour)
+				defer cleanUpCronStatsTick.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-cleanUpCronStatsTick.C:
+						cleanupCronStats()
+					}
+				}
+			}()
+
+			if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+				return newCleanupsAndAggregationSchedule(ctx, instanceID, ds, logger, redisWrapperDS, &config)
+			}); err != nil {
+				initFatal(err, "failed to register cleanups_then_aggregations schedule")
+			}
+
+			if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+				return newUsageStatisticsSchedule(ctx, instanceID, ds, config, license, logger)
+			}); err != nil {
+				initFatal(err, "failed to register stats schedule")
+			}
+
+			if !config.Vulnerabilities.DisableSchedule {
+				// vuln processing by default is run by internal cron mechanism
+				if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+					return newVulnerabilitiesSchedule(ctx, instanceID, ds, logger, &config.Vulnerabilities)
+				}); err != nil {
+					initFatal(err, "failed to register vulnerabilities schedule")
+				}
+			} else {
+				level.Info(logger).Log("msg", "vulnerabilities schedule disabled")
+			}
+
+			if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+				return newAutomationsSchedule(ctx, instanceID, ds, logger, 5*time.Minute, failingPolicySet)
+			}); err != nil {
 				initFatal(err, "failed to register automations schedule")
 			}
-			if _, err := startIntegrationsSchedule(ctx, instanceID, ds, logger); err != nil {
-				initFatal(err, "failed to register integrations schedule")
+
+			if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+				var commander *apple_mdm.MDMAppleCommander
+				if appCfg.MDM.EnabledAndConfigured {
+					commander = apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService)
+				}
+				return newWorkerIntegrationsSchedule(ctx, instanceID, ds, logger, depStorage, commander)
+			}); err != nil {
+				initFatal(err, "failed to register worker integrations schedule")
 			}
-			if config.MDMApple.Enable {
-				startAppleMDMDEPProfileAssigner(ctx, instanceID, config.MDMApple.DEP.SyncPeriodicity, ds, depStorage, logger, config.Logging.Debug)
+
+			if license.IsPremium() && appCfg.MDM.EnabledAndConfigured && config.MDM.IsAppleBMSet() {
+				if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+					return newAppleMDMDEPProfileAssigner(ctx, instanceID, config.MDM.AppleDEPSyncPeriodicity, ds, depStorage, logger)
+				}); err != nil {
+					initFatal(err, "failed to register apple_mdm_dep_profile_assigner schedule")
+				}
 			}
+
+			if appCfg.MDM.EnabledAndConfigured {
+				if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+					return newMDMAppleProfileManager(
+						ctx,
+						instanceID,
+						ds,
+						apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService),
+						logger,
+						config.Logging.Debug,
+					)
+				}); err != nil {
+					initFatal(err, "failed to register mdm_apple_profile_manager schedule")
+				}
+			}
+
+			if license.IsPremium() && config.Activity.EnableAuditLog {
+				if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
+					return newActivitiesStreamingSchedule(ctx, instanceID, ds, logger, auditLogger)
+				}); err != nil {
+					initFatal(err, "failed to register activities streaming schedule")
+				}
+			}
+
+			level.Info(logger).Log("msg", fmt.Sprintf("started cron schedules: %s", strings.Join(cronSchedules.ScheduleNames(), ", ")))
 
 			// StartCollectors starts a goroutine per collector, using ctx to cancel.
 			task.StartCollectors(ctx, kitlog.With(logger, "cron", "async_task"))
@@ -486,7 +741,7 @@ the way that the Fleet server works.
 			if !hostsAsyncCfg.Enabled {
 				go func() {
 					for range time.Tick(time.Duration(rand.Intn(10)+1) * time.Second) {
-						if err := task.FlushHostsLastSeen(context.Background(), clock.C.Now()); err != nil {
+						if err := task.FlushHostsLastSeen(baseCtx, clock.C.Now()); err != nil {
 							level.Info(logger).Log(
 								"err", err,
 								"msg", "failed to update host seen times",
@@ -527,7 +782,7 @@ the way that the Fleet server works.
 				)
 				apiHandler = service.MakeHandler(svc, config, httpLogger, limiterStore)
 
-				setupRequired, err := svc.SetupRequired(context.Background())
+				setupRequired, err := svc.SetupRequired(baseCtx)
 				if err != nil {
 					initFatal(err, "fetching setup requirement")
 				}
@@ -570,27 +825,32 @@ the way that the Fleet server works.
 			rootMux.Handle("/version", service.PrometheusMetricsHandler("version", version.Handler()))
 			rootMux.Handle("/assets/", service.PrometheusMetricsHandler("static_assets", service.ServeStaticAssets("/assets/")))
 
-			if config.MDMApple.Enable {
-				if err := registerAppleMDMProtocolServices(
+			if appCfg.MDM.EnabledAndConfigured {
+				if err := service.RegisterAppleMDMProtocolServices(
 					rootMux,
-					config.MDMApple.SCEP,
+					config.MDM,
 					mdmStorage,
 					scepStorage,
 					logger,
+					mdmCheckinAndCommandService,
 				); err != nil {
 					initFatal(err, "setup mdm apple services")
 				}
 			}
 
 			if config.Prometheus.BasicAuth.Username != "" && config.Prometheus.BasicAuth.Password != "" {
-				metricsHandler := basicAuthHandler(
+				rootMux.Handle("/metrics", basicAuthHandler(
 					config.Prometheus.BasicAuth.Username,
 					config.Prometheus.BasicAuth.Password,
 					service.PrometheusMetricsHandler("metrics", promhttp.Handler()),
-				)
-				rootMux.Handle("/metrics", metricsHandler)
+				))
 			} else {
-				level.Info(logger).Log("msg", "metrics endpoint disabled (http basic auth credentials not set)")
+				if config.Prometheus.BasicAuth.Disable {
+					level.Info(logger).Log("msg", "metrics endpoint enabled with http basic auth disabled")
+					rootMux.Handle("/metrics", service.PrometheusMetricsHandler("metrics", promhttp.Handler()))
+				} else {
+					level.Info(logger).Log("msg", "metrics endpoint disabled (http basic auth credentials not set)")
+				}
 			}
 
 			rootMux.Handle("/api/", apiHandler)
@@ -613,7 +873,7 @@ the way that the Fleet server works.
 						rw.WriteHeader(http.StatusNotFound)
 						return
 					}
-					rw.Write(testPage)
+					rw.Write(testPage) //nolint:errcheck
 					rw.WriteHeader(http.StatusOK)
 				})
 			}
@@ -655,11 +915,7 @@ the way that the Fleet server works.
 
 			// Create the handler based on whether tracing should be there
 			var handler http.Handler
-			if config.Logging.TracingEnabled && config.Logging.TracingType == "elasticapm" {
-				handler = launcher.Handler(apmhttp.Wrap(rootMux))
-			} else {
-				handler = launcher.Handler(rootMux)
-			}
+			handler = launcher.Handler(rootMux)
 
 			srv := config.Server.DefaultHTTPServer(ctx, handler)
 			if liveQueryRestPeriod > srv.WriteTimeout {
@@ -688,11 +944,13 @@ the way that the Fleet server works.
 				defer cancel()
 				errs <- func() error {
 					cancelFunc()
+					cleanupCronStatsOnShutdown(ctx, ds, logger, instanceID)
 					launcher.GracefulStop()
 					return srv.Shutdown(ctx)
 				}()
 			}()
 
+			// block on errs signal
 			logger.Log("terminated", <-errs)
 		},
 	}
@@ -703,6 +961,17 @@ the way that the Fleet server works.
 	serveCmd.PersistentFlags().BoolVar(&devExpiredLicense, "dev_expired_license", false, "Enable expired development license")
 
 	return serveCmd
+}
+
+func initLicense(config configpkg.FleetConfig, devLicense, devExpiredLicense bool) (*fleet.LicenseInfo, error) {
+	if devLicense {
+		// This license key is valid for development only
+		config.License.Key = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNzUxMjQxNjAwLCJzdWIiOiJkZXZlbG9wbWVudC1vbmx5IiwiZGV2aWNlcyI6MTAwLCJub3RlIjoiZm9yIGRldmVsb3BtZW50IG9ubHkiLCJ0aWVyIjoicHJlbWl1bSIsImlhdCI6MTY1NjY5NDA4N30.dvfterOvfTGdrsyeWYH9_lPnyovxggM5B7tkSl1q1qgFYk_GgOIxbaqIZ6gJlL0cQuBF9nt5NgV0AUT9RmZUaA"
+	} else if devExpiredLicense {
+		// An expired license key
+		config.License.Key = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJGbGVldCBEZXZpY2UgTWFuYWdlbWVudCBJbmMuIiwiZXhwIjoxNjI5NzYzMjAwLCJzdWIiOiJEZXYgbGljZW5zZSAoZXhwaXJlZCkiLCJkZXZpY2VzIjo1MDAwMDAsIm5vdGUiOiJUaGlzIGxpY2Vuc2UgaXMgdXNlZCB0byBmb3IgZGV2ZWxvcG1lbnQgcHVycG9zZXMuIiwidGllciI6ImJhc2ljIiwiaWF0IjoxNjI5OTA0NzMyfQ.AOppRkl1Mlc_dYKH9zwRqaTcL0_bQzs7RM3WSmxd3PeCH9CxJREfXma8gm0Iand6uIWw8gHq5Dn0Ivtv80xKvQ"
+	}
+	return licensing.LoadLicense(config.License.Key)
 }
 
 // basicAuthHandler wraps the given handler behind HTTP Basic Auth.
@@ -793,6 +1062,13 @@ type devSQLInterceptor struct {
 	logger kitlog.Logger
 }
 
+func (in *devSQLInterceptor) ConnQueryContext(ctx context.Context, conn driver.QueryerContext, query string, args []driver.NamedValue) (driver.Rows, error) {
+	start := time.Now()
+	rows, err := conn.QueryContext(ctx, query, args)
+	in.logQuery(start, query, args, err)
+	return rows, err
+}
+
 func (in *devSQLInterceptor) StmtQueryContext(ctx context.Context, stmt driver.StmtQueryContext, query string, args []driver.NamedValue) (driver.Rows, error) {
 	start := time.Now()
 	rows, err := stmt.QueryContext(ctx, args)
@@ -851,4 +1127,14 @@ func (m *debugMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.fleetAuthenticatedHandler.ServeHTTP(w, r)
+}
+
+// nopPusher is a no-op push.Pusher.
+type nopPusher struct{}
+
+var _ push.Pusher = nopPusher{}
+
+// Push implements push.Pusher.
+func (n nopPusher) Push(context.Context, []string) (map[string]*push.Response, error) {
+	return nil, nil
 }

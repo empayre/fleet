@@ -30,17 +30,13 @@
           }
 
           .policy-link {
-            visibility: hidden;
+            opacity: 0;
+            transition: 250ms;
             text-overflow: none;
-            img {
-              vertical-align: text-top;
-              width: 16px;
-            }
           }
           &:hover {
             .policy-link {
-              visibility: visible;
-              text-overflow: none;
+              opacity: 1;
             }
           }
           .policy-info {

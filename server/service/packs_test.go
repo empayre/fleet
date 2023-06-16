@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/fleetdm/fleet/v4/server/authz"
+	"github.com/fleetdm/fleet/v4/server/contexts/viewer"
 	"github.com/fleetdm/fleet/v4/server/datastore/mysql"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/mock"
@@ -16,7 +17,7 @@ import (
 
 func TestGetPack(t *testing.T) {
 	ds := new(mock.Store)
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 
 	ds.PackFunc = func(ctx context.Context, id uint) (*fleet.Pack, error) {
 		return &fleet.Pack{
@@ -25,23 +26,23 @@ func TestGetPack(t *testing.T) {
 		}, nil
 	}
 
-	pack, err := svc.GetPack(test.UserContext(test.UserAdmin), 1)
+	pack, err := svc.GetPack(test.UserContext(ctx, test.UserAdmin), 1)
 	require.NoError(t, err)
 	require.Equal(t, uint(1), pack.ID)
 
-	_, err = svc.GetPack(test.UserContext(test.UserNoRoles), 1)
+	_, err = svc.GetPack(test.UserContext(ctx, test.UserNoRoles), 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), authz.ForbiddenErrorMessage)
 }
 
 func TestNewPackSavesTargets(t *testing.T) {
 	ds := new(mock.Store)
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 
 	ds.NewPackFunc = func(ctx context.Context, pack *fleet.Pack, opts ...fleet.OptionalArg) (*fleet.Pack, error) {
 		return pack, nil
 	}
-	ds.NewActivityFunc = func(ctx context.Context, user *fleet.User, activityType string, details *map[string]interface{}) error {
+	ds.NewActivityFunc = func(ctx context.Context, user *fleet.User, activity fleet.ActivityDetails) error {
 		return nil
 	}
 
@@ -51,7 +52,7 @@ func TestNewPackSavesTargets(t *testing.T) {
 		LabelIDs: &[]uint{456},
 		TeamIDs:  &[]uint{789},
 	}
-	pack, err := svc.NewPack(test.UserContext(test.UserAdmin), packPayload)
+	pack, err := svc.NewPack(test.UserContext(ctx, test.UserAdmin), packPayload)
 	require.NoError(t, err)
 
 	require.Len(t, pack.HostIDs, 1)
@@ -86,11 +87,11 @@ func TestPacksWithDS(t *testing.T) {
 }
 
 func testPacksModifyPack(t *testing.T, ds *mysql.Datastore) {
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 	test.AddAllHostsLabel(t, ds)
 	users := createTestUsers(t, ds)
 
-	globalPack, err := ds.EnsureGlobalPack(context.Background())
+	globalPack, err := ds.EnsureGlobalPack(ctx)
 	require.NoError(t, err)
 
 	labelids := []uint{1, 2, 3}
@@ -105,7 +106,7 @@ func testPacksModifyPack(t *testing.T, ds *mysql.Datastore) {
 	}
 
 	user := users["admin1@example.com"]
-	pack, _ := svc.ModifyPack(test.UserContext(&user), globalPack.ID, packPayload)
+	pack, _ := svc.ModifyPack(test.UserContext(ctx, &user), globalPack.ID, packPayload)
 
 	require.Equal(t, "Global", pack.Name, "name for global pack should not change")
 	require.Equal(t, "Global pack", pack.Description, "description for global pack should not change")
@@ -115,18 +116,18 @@ func testPacksModifyPack(t *testing.T, ds *mysql.Datastore) {
 }
 
 func testPacksListPacks(t *testing.T, ds *mysql.Datastore) {
-	svc := newTestService(t, ds, nil, nil)
+	svc, ctx := newTestService(t, ds, nil, nil)
 
-	queries, err := svc.ListPacks(test.UserContext(test.UserAdmin), fleet.PackListOptions{IncludeSystemPacks: false})
+	queries, err := svc.ListPacks(test.UserContext(ctx, test.UserAdmin), fleet.PackListOptions{IncludeSystemPacks: false})
 	require.NoError(t, err)
 	assert.Len(t, queries, 0)
 
-	_, err = ds.NewPack(context.Background(), &fleet.Pack{
+	_, err = ds.NewPack(ctx, &fleet.Pack{
 		Name: "foo",
 	})
 	require.NoError(t, err)
 
-	queries, err = svc.ListPacks(test.UserContext(test.UserAdmin), fleet.PackListOptions{IncludeSystemPacks: false})
+	queries, err = svc.ListPacks(test.UserContext(ctx, test.UserAdmin), fleet.PackListOptions{IncludeSystemPacks: false})
 	require.NoError(t, err)
 	assert.Len(t, queries, 1)
 }
@@ -162,7 +163,7 @@ func testPacksDeletePack(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "cannot delete global pack",
 			args: args{
-				ctx:  test.UserContext(&user),
+				ctx:  test.UserContext(context.Background(), &user),
 				name: gp.Name,
 			},
 			wantErr: true,
@@ -170,7 +171,7 @@ func testPacksDeletePack(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "cannot delete team pack",
 			args: args{
-				ctx:  test.UserContext(&user),
+				ctx:  test.UserContext(context.Background(), &user),
 				name: tp.Name,
 			},
 			wantErr: true,
@@ -178,7 +179,7 @@ func testPacksDeletePack(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "delete pack that doesn't exist",
 			args: args{
-				ctx:  test.UserContext(&user),
+				ctx:  test.UserContext(context.Background(), &user),
 				name: "foo",
 			},
 			wantErr: true,
@@ -186,7 +187,7 @@ func testPacksDeletePack(t *testing.T, ds *mysql.Datastore) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := newTestService(t, ds, nil, nil)
+			svc, _ := newTestService(t, ds, nil, nil)
 			if err := svc.DeletePack(tt.args.ctx, tt.args.name); (err != nil) != tt.wantErr {
 				t.Errorf("DeletePack() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -212,7 +213,7 @@ func testPacksDeletePackByID(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "cannot delete global pack",
 			args: args{
-				ctx: test.UserContext(test.UserAdmin),
+				ctx: test.UserContext(context.Background(), test.UserAdmin),
 				id:  globalPack.ID,
 			},
 			wantErr: true,
@@ -220,7 +221,7 @@ func testPacksDeletePackByID(t *testing.T, ds *mysql.Datastore) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := newTestService(t, ds, nil, nil)
+			svc, _ := newTestService(t, ds, nil, nil)
 			if err := svc.DeletePackByID(tt.args.ctx, tt.args.id); (err != nil) != tt.wantErr {
 				t.Errorf("DeletePackByID() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -260,7 +261,7 @@ func testPacksApplyPackSpecs(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "cannot modify global pack",
 			args: args{
-				ctx: test.UserContext(&user),
+				ctx: test.UserContext(context.Background(), &user),
 				specs: []*fleet.PackSpec{
 					{Name: global.Name, Description: "bar", Platform: "baz"},
 					{Name: "Foo Pack", Description: "Foo Desc", Platform: "MacOS"},
@@ -276,7 +277,7 @@ func testPacksApplyPackSpecs(t *testing.T, ds *mysql.Datastore) {
 		{
 			name: "cannot modify team pack",
 			args: args{
-				ctx: test.UserContext(&user),
+				ctx: test.UserContext(context.Background(), &user),
 				specs: []*fleet.PackSpec{
 					{Name: teamPack.Name, Description: "Desc", Platform: "windows"},
 					{Name: "Test", Description: "Test Desc", Platform: "linux"},
@@ -290,13 +291,131 @@ func testPacksApplyPackSpecs(t *testing.T, ds *mysql.Datastore) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := newTestService(t, ds, nil, nil)
+			svc, _ := newTestService(t, ds, nil, nil)
 			got, err := svc.ApplyPackSpecs(tt.args.ctx, tt.args.specs)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ApplyPackSpecs() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestUserIsGitOpsOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		user       *fleet.User
+		expectedFn func(value bool, err error) bool
+	}{
+		{
+			name: "missing user in context",
+			user: nil,
+			expectedFn: func(value bool, err error) bool {
+				return err != nil && !value
+			},
+		},
+		{
+			name: "no roles",
+			user: &fleet.User{},
+			expectedFn: func(value bool, err error) bool {
+				return err != nil && !value
+			},
+		},
+		{
+			name: "global gitops",
+			user: &fleet.User{
+				GlobalRole: ptr.String(fleet.RoleGitOps),
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && value
+			},
+		},
+		{
+			name: "global non-gitops",
+			user: &fleet.User{
+				GlobalRole: ptr.String(fleet.RoleObserver),
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && !value
+			},
+		},
+		{
+			name: "team gitops",
+			user: &fleet.User{
+				GlobalRole: nil,
+				Teams: []fleet.UserTeam{
+					{
+						Team: fleet.Team{ID: 1},
+						Role: fleet.RoleGitOps,
+					},
+				},
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && value
+			},
+		},
+		{
+			name: "multiple team gitops",
+			user: &fleet.User{
+				GlobalRole: nil,
+				Teams: []fleet.UserTeam{
+					{
+						Team: fleet.Team{ID: 1},
+						Role: fleet.RoleGitOps,
+					},
+					{
+						Team: fleet.Team{ID: 2},
+						Role: fleet.RoleGitOps,
+					},
+				},
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && value
+			},
+		},
+		{
+			name: "multiple teams, not all gitops",
+			user: &fleet.User{
+				GlobalRole: nil,
+				Teams: []fleet.UserTeam{
+					{
+						Team: fleet.Team{ID: 1},
+						Role: fleet.RoleObserver,
+					},
+					{
+						Team: fleet.Team{ID: 2},
+						Role: fleet.RoleGitOps,
+					},
+				},
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && !value
+			},
+		},
+		{
+			name: "multiple teams, none gitops",
+			user: &fleet.User{
+				GlobalRole: nil,
+				Teams: []fleet.UserTeam{
+					{
+						Team: fleet.Team{ID: 1},
+						Role: fleet.RoleObserver,
+					},
+					{
+						Team: fleet.Team{ID: 2},
+						Role: fleet.RoleMaintainer,
+					},
+				},
+			},
+			expectedFn: func(value bool, err error) bool {
+				return err == nil && !value
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actual, err := userIsGitOpsOnly(viewer.NewContext(context.Background(), viewer.Viewer{User: tc.user}))
+			require.True(t, tc.expectedFn(actual, err))
 		})
 	}
 }

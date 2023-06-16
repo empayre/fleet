@@ -14,21 +14,21 @@ import (
 
 	"github.com/fleetdm/fleet/v4/pkg/secure"
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
-	lumberjack "gopkg.in/natefinch/lumberjack.v2"
-
 	"github.com/go-kit/kit/log"
+	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 )
 
 type filesystemLogWriter struct {
 	writer io.WriteCloser
 }
 
-// NewFilesystemLogWriter creates a log file for osquery status/result logs.
+// NewFilesystemLogWriter creates a logger that writes to a file.
+//
 // The logFile can be rotated by sending a `SIGHUP` signal to Fleet if
 // enableRotation is true
 //
 // The enableCompression argument is only used when enableRotation is true.
-func NewFilesystemLogWriter(path string, appLogger log.Logger, enableRotation bool, enableCompression bool) (*filesystemLogWriter, error) {
+func NewFilesystemLogWriter(path string, appLogger log.Logger, enableRotation, enableCompression bool, maxSize, maxAge, maxBackups int) (*filesystemLogWriter, error) {
 	// Fail early if the process does not have the necessary
 	// permissions to open the file at path.
 	file, err := openFile(path)
@@ -43,25 +43,25 @@ func NewFilesystemLogWriter(path string, appLogger log.Logger, enableRotation bo
 	}
 	// Use lumberjack logger that supports rotation
 	file.Close()
-	osquerydLogger := &lumberjack.Logger{
+	fsLogger := &lumberjack.Logger{
 		Filename:   path,
-		MaxSize:    500, // megabytes
-		MaxBackups: 3,
-		MaxAge:     28, //days
+		MaxSize:    maxSize, // megabytes
+		MaxBackups: maxBackups,
+		MaxAge:     maxAge, // days
 		Compress:   enableCompression,
 	}
-	appLogger = log.With(appLogger, "component", "osqueryd-logger")
+	appLogger = log.With(appLogger, "component", "filesystem-logger")
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGHUP)
 	go func() {
 		for {
-			<-sig //block on signal
-			if err := osquerydLogger.Rotate(); err != nil {
+			<-sig // block on signal
+			if err := fsLogger.Rotate(); err != nil {
 				appLogger.Log("err", err)
 			}
 		}
 	}()
-	return &filesystemLogWriter{osquerydLogger}, nil
+	return &filesystemLogWriter{fsLogger}, nil
 }
 
 // If writer is based on bufio we want to flush after a batch of
@@ -107,7 +107,7 @@ func (l *rawLogWriter) Write(b []byte) (int, error) {
 		return 0, errors.New("filesystemLogWriter: can't write to closed file")
 	}
 	if _, statErr := os.Stat(l.file.Name()); errors.Is(statErr, os.ErrNotExist) {
-		f, err := secure.OpenFile(l.file.Name(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+		f, err := secure.OpenFile(l.file.Name(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 		if err != nil {
 			return 0, fmt.Errorf("create file for filesystemLogWriter %s: %w", l.file.Name(), err)
 		}
@@ -148,5 +148,5 @@ func (l *rawLogWriter) Close() error {
 }
 
 func openFile(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
+	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 }

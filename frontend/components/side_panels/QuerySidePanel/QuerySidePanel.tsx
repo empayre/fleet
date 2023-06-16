@@ -6,7 +6,7 @@ import { osqueryTableNames } from "utilities/osquery_tables";
 // @ts-ignore
 import Dropdown from "components/forms/fields/Dropdown";
 import FleetMarkdown from "components/FleetMarkdown";
-import Icon from "components/Icon";
+import CustomLink from "components/CustomLink";
 
 import QueryTableColumns from "./QueryTableColumns";
 import QueryTablePlatforms from "./QueryTablePlatforms";
@@ -15,6 +15,7 @@ import QueryTablePlatforms from "./QueryTablePlatforms";
 import CloseIcon from "../../../../assets/images/icon-close-black-50-8x8@2x.png";
 import QueryTableExample from "./QueryTableExample";
 import QueryTableNotes from "./QueryTableNotes";
+import EventedTableTag from "./EventedTableTag";
 
 interface IQuerySidePanel {
   selectedOsqueryTable: IOsQueryTable;
@@ -39,12 +40,14 @@ const QuerySidePanel = ({
     evented,
   } = selectedOsqueryTable;
 
+  const mdmRequired = name === "managed_policies";
+
   const onSelectTable = (value: string) => {
     onOsqueryTableSelect(value);
   };
 
   const renderTableSelect = () => {
-    const tableNames = osqueryTableNames?.map((tableName: string) => {
+    const tableNames = osqueryTableNames.map((tableName: string) => {
       return { label: tableName, value: tableName };
     });
 
@@ -54,6 +57,7 @@ const QuerySidePanel = ({
         value={name}
         onChange={onSelectTable}
         placeholder="Choose Table..."
+        className={`${baseClass}__table-select`}
       />
     );
   };
@@ -77,11 +81,9 @@ const QuerySidePanel = ({
         </h2>
         {renderTableSelect()}
       </div>
-      {evented && (
-        <div className={`${baseClass}__evented-table-tag`}>
-          <Icon name="calendar-check" className={`${baseClass}__event-icon`} />
-          <span>EVENTED TABLE</span>
-        </div>
+      {evented && <EventedTableTag selectedTableName={name} />}
+      {mdmRequired && (
+        <span className={`${baseClass}__mdm-required`}>Requires MDM</span>
       )}
       <div className={`${baseClass}__description`}>
         <FleetMarkdown markdown={description} />
@@ -90,6 +92,11 @@ const QuerySidePanel = ({
       <QueryTableColumns columns={columns} />
       {examples && <QueryTableExample example={examples} />}
       {notes && <QueryTableNotes notes={notes} />}
+      <CustomLink
+        url={`https://www.fleetdm.com/tables/${name}`}
+        text="Source"
+        newTab
+      />
     </>
   );
 };

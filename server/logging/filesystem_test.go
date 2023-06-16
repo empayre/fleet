@@ -18,9 +18,9 @@ import (
 func TestFilesystemLogger(t *testing.T) {
 	ctx := context.Background()
 	tempPath := t.TempDir()
-	require.NoError(t, os.Chmod(tempPath, 0755))
+	require.NoError(t, os.Chmod(tempPath, 0o755))
 	fileName := filepath.Join(tempPath, "filesystemLogWriter")
-	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), false, false)
+	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), false, false, 500, 28, 3)
 	require.Nil(t, err)
 	defer os.Remove(fileName)
 
@@ -33,7 +33,7 @@ func TestFilesystemLogger(t *testing.T) {
 	var logs []json.RawMessage
 	for i := 0; i < logCount; i++ {
 		randInput := make([]byte, logSize)
-		rand.Read(randInput)
+		rand.Read(randInput) //nolint:errcheck
 		logs = append(logs, randInput)
 	}
 
@@ -57,14 +57,13 @@ func TestFilesystemLogger(t *testing.T) {
 	require.Nil(t, err)
 	// + 1 below is for newlines that should be appended to each log
 	assert.Equal(t, int64(batches*logCount*(logSize+1)), info.Size())
-
 }
 
 // TestFilesystemLoggerPermission tests that NewFilesystemLogWriter fails
 // if the process does not have permissions to write to the provided path.
 func TestFilesystemLoggerPermission(t *testing.T) {
 	tempPath := t.TempDir()
-	require.NoError(t, os.Chmod(tempPath, 0000))
+	require.NoError(t, os.Chmod(tempPath, 0o000))
 	fileName := filepath.Join(tempPath, "filesystemLogWriter")
 	for _, tc := range []struct {
 		name     string
@@ -74,7 +73,7 @@ func TestFilesystemLoggerPermission(t *testing.T) {
 		{name: "without-rotation", rotation: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), tc.rotation, false)
+			_, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), tc.rotation, false, 500, 28, 3)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, fs.ErrPermission), err)
 		})
@@ -84,7 +83,7 @@ func TestFilesystemLoggerPermission(t *testing.T) {
 func BenchmarkFilesystemLogger(b *testing.B) {
 	ctx := context.Background()
 	fileName := filepath.Join(b.TempDir(), "filesystemLogWriter")
-	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), false, false)
+	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), false, false, 500, 28, 3)
 	if err != nil {
 		b.Fatal("new failed ", err)
 	}
@@ -92,7 +91,7 @@ func BenchmarkFilesystemLogger(b *testing.B) {
 	var logs []json.RawMessage
 	for i := 0; i < 50; i++ {
 		randInput := make([]byte, 512)
-		rand.Read(randInput)
+		rand.Read(randInput) //nolint:errcheck
 		logs = append(logs, randInput)
 	}
 	b.ResetTimer()
@@ -120,7 +119,7 @@ func BenchmarkLumberjackWithCompression(b *testing.B) {
 func benchLumberjack(b *testing.B, compression bool) {
 	ctx := context.Background()
 	fileName := filepath.Join(b.TempDir(), "lumberjack")
-	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), true, compression)
+	lgr, err := NewFilesystemLogWriter(fileName, log.NewNopLogger(), true, compression, 500, 28, 3)
 	if err != nil {
 		b.Fatal("new failed ", err)
 	}
@@ -128,7 +127,7 @@ func benchLumberjack(b *testing.B, compression bool) {
 	var logs []json.RawMessage
 	for i := 0; i < 50; i++ {
 		randInput := make([]byte, 512)
-		rand.Read(randInput)
+		rand.Read(randInput) //nolint:errcheck
 		logs = append(logs, randInput)
 	}
 	// first lumberjack write opens file so we count that as part of initialization

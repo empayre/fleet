@@ -1,44 +1,62 @@
-import React from "react";
+import React, { useContext } from "react";
 
+import { AppContext } from "context/app";
 import Modal from "components/Modal";
 import Button from "components/buttons/Button";
+import CustomLink from "components/CustomLink";
 
-import ExternalLinkIcon from "../../../../../../assets/images/icon-external-link-12x12@2x.png";
-import JiraTicket from "../../../../../../assets/images/ticket-policies-jira-screenshot-400x419@2x.png";
-import ZendeskTicket from "../../../../../../assets/images/ticket-policies-zendesk-screenshot-400x515@2x.png";
+import { IIntegrationType } from "interfaces/integration";
+
+import JiraPreview from "../../../../../../assets/images/jira-policy-automation-preview-400x419@2x.png";
+import ZendeskPreview from "../../../../../../assets/images/zendesk-policy-automation-preview-400x515@2x.png";
+import JiraPreviewPremium from "../../../../../../assets/images/jira-policy-automation-preview-premium-400x316@2x.png";
+import ZendeskPreviewPremium from "../../../../../../assets/images/zendesk-policy-automation-preview-premium-400x483@2x.png";
 
 const baseClass = "preview-ticket-modal";
 
 interface IPreviewTicketModalProps {
-  type?: "jira" | "zendesk";
+  integrationType?: IIntegrationType;
   onCancel: () => void;
 }
 
 const PreviewTicketModal = ({
-  type,
+  integrationType,
   onCancel,
 }: IPreviewTicketModalProps): JSX.Element => {
+  const { isPremiumTier } = useContext(AppContext);
+
+  const screenshot =
+    integrationType === "jira" ? (
+      <img
+        src={isPremiumTier ? JiraPreviewPremium : JiraPreview}
+        alt="Jira example policy automation ticket"
+        className={`${baseClass}__screenshot`}
+      />
+    ) : (
+      <img
+        src={isPremiumTier ? ZendeskPreviewPremium : ZendeskPreview}
+        alt="Zendesk example policy automation ticket"
+        className={`${baseClass}__screenshot`}
+      />
+    );
+
   return (
-    <Modal title={"Example ticket"} onExit={onCancel} className={baseClass}>
+    <Modal
+      title={"Example ticket"}
+      onExit={onCancel}
+      className={baseClass}
+      width="large"
+    >
       <div className={`${baseClass}`}>
-        <p>
+        <p className="automations-learn-more">
           Want to learn more about how automations in Fleet work?{" "}
-          <a
-            href="https://fleetdm.com/docs/using-fleet/automations"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Check out the Fleet documentation
-            <img src={ExternalLinkIcon} alt="Open external link" />
-          </a>
-        </p>
-        <div className={`${baseClass}__example`}>
-          <img
-            className={`${baseClass}__screenshot`}
-            alt="Example policies automation ticket"
-            src={type === "zendesk" ? ZendeskTicket : JiraTicket}
+          <CustomLink
+            url="https://fleetdm.com/docs/using-fleet/automations"
+            text=" Check out the Fleet documentation"
+            newTab
           />
-        </div>
+        </p>
+        <div className={`${baseClass}__example`}>{screenshot}</div>
         <div className="modal-cta-wrap">
           <Button onClick={onCancel} variant="brand">
             Done
