@@ -28,7 +28,7 @@ const UserMenu = ({
   currentUser,
   isSandboxMode = false,
 }: IUserMenuProps): JSX.Element => {
-  const accountNavigate = onNavItemClick(PATHS.USER_SETTINGS);
+  const accountNavigate = onNavItemClick(PATHS.ACCOUNT);
   const dropdownItems = [
     {
       label: "My account",
@@ -61,8 +61,8 @@ const UserMenu = ({
     const sortedTeams = getSortedTeamOptions(userAdminTeams);
     const settingsPath =
       currentUser.global_role === "admin"
-        ? PATHS.ADMIN_SETTINGS
-        : `${PATHS.TEAM_DETAILS_MEMBERS(sortedTeams[0].value)}`;
+        ? PATHS.ADMIN_ORGANIZATION
+        : `${PATHS.TEAM_DETAILS_USERS(sortedTeams[0].value)}`;
     const settingsNavigate = onNavItemClick(settingsPath);
     const adminNavItem = {
       label: "Settings",
@@ -72,7 +72,7 @@ const UserMenu = ({
   }
 
   return (
-    <div className={baseClass}>
+    <div className={baseClass} data-testid="user-menu">
       <DropdownButton options={dropdownItems}>
         <AvatarTopNav
           className={`${baseClass}__avatar-image`}

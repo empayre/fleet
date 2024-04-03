@@ -5,7 +5,7 @@ import {
   OS_END_OF_LIFE_LINK_BY_PLATFORM,
   OS_VENDOR_BY_PLATFORM,
 } from "interfaces/operating_system";
-import { ISelectedPlatform } from "interfaces/platform";
+import { SelectedPlatform } from "interfaces/platform";
 import {
   getOSVersions,
   IGetOSVersionsQueryKey,
@@ -26,7 +26,7 @@ import generateTableHeaders from "./OperatingSystemsTableConfig";
 
 interface IOperatingSystemsCardProps {
   currentTeamId: number | undefined;
-  selectedPlatform: ISelectedPlatform;
+  selectedPlatform: SelectedPlatform;
   showTitle: boolean;
   /** controls the displaying of description text under the title. Defaults to `true` */
   showDescription?: boolean;
@@ -42,12 +42,12 @@ const DEFAULT_SORT_HEADER = "hosts_count";
 const PAGE_SIZE = 8;
 const baseClass = "operating-systems";
 
-const EmptyOperatingSystems = (platform: ISelectedPlatform): JSX.Element => (
+const EmptyOperatingSystems = (platform: SelectedPlatform): JSX.Element => (
   <EmptyTable
     className={`${baseClass}__os-empty-table`}
     header={`No${
       ` ${PLATFORM_DISPLAY_NAMES[platform]}` || ""
-    } operating systems detected.`}
+    } operating systems detected`}
     info="This report is updated every hour to protect the performance of your
       devices."
   />
@@ -97,7 +97,7 @@ const OperatingSystems = ({
           Chromebooks automatically receive updates from Google until their
           auto-update expiration date.{" "}
           <CustomLink
-            url={"https://fleetdm.com/learn-more-about/chromeos-updates"}
+            url="https://fleetdm.com/learn-more-about/chromeos-updates"
             text="See supported devices"
             newTab
             multiline
@@ -127,7 +127,7 @@ const OperatingSystems = ({
   const titleDetail = osInfo?.counts_updated_at ? (
     <LastUpdatedText
       lastUpdatedAt={osInfo?.counts_updated_at}
-      whatToRetrieve={"operating systems"}
+      whatToRetrieve="operating systems"
     />
   ) : null;
 
@@ -149,7 +149,7 @@ const OperatingSystems = ({
   }, [isFetching, osInfo, setTitleDescription, setTitleDetail]);
 
   const tableHeaders = useMemo(
-    () => generateTableHeaders(includeNameColumn, currentTeamId),
+    () => generateTableHeaders(currentTeamId, undefined, { includeName: true }),
     [includeNameColumn, currentTeamId]
   );
 
@@ -170,12 +170,12 @@ const OperatingSystems = ({
           <TableDataError card />
         ) : (
           <TableContainer
-            columns={tableHeaders}
+            columnConfigs={tableHeaders}
             data={osInfo?.os_versions || []}
             isLoading={isFetching}
             defaultSortHeader={DEFAULT_SORT_HEADER}
             defaultSortDirection={DEFAULT_SORT_DIRECTION}
-            resultsTitle={"Operating systems"}
+            resultsTitle="Operating systems"
             emptyComponent={() => EmptyOperatingSystems(selectedPlatform)}
             showMarkAllPages={false}
             isAllPagesSelected={false}

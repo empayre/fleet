@@ -39,6 +39,15 @@ const (
 	OnlineIntervalBuffer = 60
 )
 
+func (s HostStatus) IsValid() bool {
+	switch s {
+	case StatusOnline, StatusOffline, StatusNew, StatusMissing, StatusMIA:
+		return true
+	default:
+		return false
+	}
+}
+
 // MDMEnrollStatus defines the possible MDM enrollment statuses.
 type MDMEnrollStatus string
 
@@ -50,20 +59,20 @@ const (
 	MDMEnrollStatusEnrolled   = MDMEnrollStatus("enrolled") // combination of "manual" and "automatic"
 )
 
-// MacOSSettingsStatus defines the possible statuses of the host's macOS settings, which is derived from the
-// status of MDM configuration profiles applied to the host.
-type MacOSSettingsStatus string
+// OSSettingsStatus defines the possible statuses of the host's OS settings, which is derived from the
+// status of MDM configuration profiles and non-profile settings applied the host.
+type OSSettingsStatus string
 
 const (
-	MacOSSettingsVerified  MacOSSettingsStatus = "verified"
-	MacOSSettingsVerifying MacOSSettingsStatus = "verifying"
-	MacOSSettingsPending   MacOSSettingsStatus = "pending"
-	MacOSSettingsFailed    MacOSSettingsStatus = "failed"
+	OSSettingsVerified  OSSettingsStatus = "verified"
+	OSSettingsVerifying OSSettingsStatus = "verifying"
+	OSSettingsPending   OSSettingsStatus = "pending"
+	OSSettingsFailed    OSSettingsStatus = "failed"
 )
 
-func (s MacOSSettingsStatus) IsValid() bool {
+func (s OSSettingsStatus) IsValid() bool {
 	switch s {
-	case MacOSSettingsFailed, MacOSSettingsPending, MacOSSettingsVerifying, MacOSSettingsVerified:
+	case OSSettingsFailed, OSSettingsPending, OSSettingsVerifying, OSSettingsVerified:
 		return true
 	default:
 		return false
@@ -126,21 +135,39 @@ type HostListOptions struct {
 	PolicyIDFilter       *uint
 	PolicyResponseFilter *bool
 
+	// Deprecated: SoftwareIDFilter is deprecated as of Fleet 4.42. It is
+	// maintained for backwards compatibility. Use SoftwareVersionIDFilter
+	// instead.
 	SoftwareIDFilter *uint
+	// SoftwareVersionIDFilter filters the hosts by the software version ID that
+	// they use. This identifies a specific version of a "software title".
+	SoftwareVersionIDFilter *uint
+	// SoftwareTitleIDFilter filers the hosts by the software title ID that they
+	// use. This identifies a "software title" independent of the specific
+	// version.
+	SoftwareTitleIDFilter *uint
 
-	OSIDFilter      *uint
-	OSNameFilter    *string
-	OSVersionFilter *string
+	OSIDFilter        *uint
+	OSNameFilter      *string
+	OSVersionFilter   *string
+	OSVersionIDFilter *uint
 
 	DisableFailingPolicies bool
 
 	// MacOSSettingsFilter filters the hosts by the status of MDM configuration profiles
 	// applied to the hosts.
-	MacOSSettingsFilter MacOSSettingsStatus
+	MacOSSettingsFilter OSSettingsStatus
 
 	// MacOSSettingsDiskEncryptionFilter filters the hosts by the status of the disk encryption
 	// MDM profile.
 	MacOSSettingsDiskEncryptionFilter DiskEncryptionStatus
+
+	// OSSettingsFilter filters the hosts by the status of MDM configuration profiles and
+	// non-profile settings applied to the hosts.
+	OSSettingsFilter OSSettingsStatus
+	// OSSettingsDiskEncryptionFilter filters the hosts by the status of the disk encryption
+	// OS setting.
+	OSSettingsDiskEncryptionFilter DiskEncryptionStatus
 
 	// MDMBootstrapPackageFilter filters the hosts by the status of the MDM bootstrap package.
 	MDMBootstrapPackageFilter *MDMBootstrapPackageStatus
@@ -160,6 +187,15 @@ type HostListOptions struct {
 	// Premium feature, Fleet Free ignores the setting (it forces it to nil to
 	// disable it).
 	LowDiskSpaceFilter *int
+
+	// PopulateSoftware adds the `Software` field to all Hosts returned.
+	PopulateSoftware bool
+
+	// PopulatePolicies adds the `Policies` array field to all Hosts returned.
+	PopulatePolicies bool
+
+	// VulnerabilityFilter filters the hosts by the presence of a vulnerability (CVE)
+	VulnerabilityFilter *string
 }
 
 // TODO(Sarah): Are we missing any filters here? Should all MDM filters be included?
@@ -172,6 +208,8 @@ func (h HostListOptions) Empty() bool {
 		h.PolicyIDFilter == nil &&
 		h.PolicyResponseFilter == nil &&
 		h.SoftwareIDFilter == nil &&
+		h.SoftwareVersionIDFilter == nil &&
+		h.SoftwareTitleIDFilter == nil &&
 		h.OSIDFilter == nil &&
 		h.OSNameFilter == nil &&
 		h.OSVersionFilter == nil &&
@@ -183,7 +221,9 @@ func (h HostListOptions) Empty() bool {
 		h.MDMNameFilter == nil &&
 		h.MDMEnrollmentStatusFilter == "" &&
 		h.MunkiIssueIDFilter == nil &&
-		h.LowDiskSpaceFilter == nil
+		h.LowDiskSpaceFilter == nil &&
+		h.OSSettingsFilter == "" &&
+		h.OSSettingsDiskEncryptionFilter == ""
 }
 
 type HostUser struct {
@@ -257,6 +297,7 @@ type Host struct {
 
 	GigsDiskSpaceAvailable    float64 `json:"gigs_disk_space_available" db:"gigs_disk_space_available" csv:"gigs_disk_space_available"`
 	PercentDiskSpaceAvailable float64 `json:"percent_disk_space_available" db:"percent_disk_space_available" csv:"percent_disk_space_available"`
+	GigsTotalDiskSpace        float64 `json:"gigs_total_disk_space" db:"gigs_total_disk_space" csv:"gigs_total_disk_space"`
 
 	// DiskEncryptionEnabled is only returned by GET /host/{id} and so is not
 	// exportable as CSV (which is the result of List Hosts endpoint). It is
@@ -307,6 +348,28 @@ type Host struct {
 	// The boolean is based on information ingested from the Apple DEP API that is stored in the
 	// host_dep_assignments table.
 	DEPAssignedToFleet *bool `json:"dep_assigned_to_fleet,omitempty" db:"dep_assigned_to_fleet" csv:"-"`
+
+	// LastRestartedAt is a UNIX timestamp that indicates when the Host was last restarted.
+	LastRestartedAt time.Time `json:"last_restarted_at" db:"last_restarted_at" csv:"last_restarted_at"`
+
+	// Policies is the list of policies and whether it passes for the host
+	Policies *[]*HostPolicy `json:"policies,omitempty" csv:"-"`
+}
+
+// HostHealth contains a subset of Host data that indicates how healthy a Host is. For fields with
+// the same name, see the comments/docs for the Host field above.
+type HostHealth struct {
+	UpdatedAt             time.Time           `json:"updated_at,omitempty" db:"updated_at"`
+	OsVersion             string              `json:"os_version,omitempty" db:"os_version"`
+	DiskEncryptionEnabled *bool               `json:"disk_encryption_enabled,omitempty" db:"disk_encryption_enabled"`
+	VulnerableSoftware    []HostSoftwareEntry `json:"vulnerable_software,omitempty"`
+	FailingPolicies       []*HostPolicy       `json:"failing_policies,omitempty"`
+	Platform              string              `json:"-" db:"platform"`                // Needed to fetch failing policies. Not returned in HTTP responses.
+	TeamID                *uint               `json:"team_id,omitempty" db:"team_id"` // Needed to verify that user can access this host's health data. Not returned in HTTP responses.
+}
+
+func (hh HostHealth) AuthzType() string {
+	return "host_health"
 }
 
 type MDMHostData struct {
@@ -316,6 +379,10 @@ type MDMHostData struct {
 	// EnrollmentStatus is a string representation of state derived from
 	// booleans stored in the host_mdm table, loaded by JOIN in datastore
 	EnrollmentStatus *string `json:"enrollment_status" db:"-" csv:"mdm.enrollment_status"`
+	// DEPProfileError is a boolean representing whether Fleet received a "FAILED" response when
+	// attempting to assign a DEP profile for the host.
+	// See https://developer.apple.com/documentation/devicemanagement/assignprofileresponse
+	DEPProfileError bool `json:"dep_profile_error" db:"dep_profile_error" csv:"mdm.dep_profile_error"`
 	// ServerURL is the server_url stored in the host_mdm table, loaded by
 	// JOIN in datastore
 	ServerURL *string `json:"server_url" db:"-" csv:"mdm.server_url"`
@@ -333,13 +400,19 @@ type MDMHostData struct {
 	// gets filled.
 	rawDecryptable *int
 
+	// OSSettings contains information related to operating systems settings that are managed for
+	// MDM-enrolled hosts.
+	//
+	// Note: Additional information for macOS hosts is currently stored in MacOSSettings.
+	OSSettings *HostMDMOSSettings `json:"os_settings,omitempty" db:"-" csv:"-"`
+
 	// Profiles is a list of HostMDMProfiles for the host. Note that as for many
 	// other host fields, it is not filled in by all host-returning datastore methods.
 	//
 	// It is a pointer to a slice so that when set, it gets marhsaled even
 	// if the slice is empty, but when unset, it doesn't get marshaled
 	// (e.g. we don't return that information for the List Hosts endpoint).
-	Profiles *[]HostMDMAppleProfile `json:"profiles,omitempty" db:"profiles" csv:"-"`
+	Profiles *[]HostMDMProfile `json:"profiles,omitempty" db:"profiles" csv:"-"`
 
 	// MacOSSettings indicates macOS-specific MDM settings for the host, such
 	// as disk encryption status and whether any user action is required to
@@ -353,6 +426,22 @@ type MDMHostData struct {
 	//
 	// It is not filled in by all host-returning datastore methods.
 	MacOSSetup *HostMDMMacOSSetup `json:"macos_setup,omitempty" db:"-" csv:"-"`
+
+	// The DeviceStatus and PendingAction fields are not stored in the database
+	// directly, they are read from the GetHostLockWipeStatus datastore method
+	// and determined from those results. They are not filled by all
+	// host-returning methods.
+	DeviceStatus  *string `json:"device_status,omitempty" db:"-" csv:"-"`
+	PendingAction *string `json:"pending_action,omitempty" db:"-" csv:"-"`
+}
+
+type HostMDMOSSettings struct {
+	DiskEncryption HostMDMDiskEncryption `json:"disk_encryption" db:"-" csv:"-"`
+}
+
+type HostMDMDiskEncryption struct {
+	Status *DiskEncryptionStatus `json:"status" db:"-" csv:"-"`
+	Detail string                `json:"detail" db:"-" csv:"-"`
 }
 
 type DiskEncryptionStatus string
@@ -408,11 +497,15 @@ type HostMDMMacOSSetup struct {
 	BootstrapPackageName   string                    `db:"bootstrap_package_name" json:"bootstrap_package_name" csv:"-"`
 }
 
-// DetermineDiskEncryptionStatus determines the disk encryption status for the
+// PopulateOSSettingsAndMacOSSettings populates the OSSettings and MacOSSettings
+// on the MDMHostData struct. It determines the disk encryption status for the
 // host based on the file-vault profile in its list of profiles and whether its
 // disk encryption key is available and decryptable. The file-vault profile
-// identifier is received as argument to avoid a circular dependency.
-func (d *MDMHostData) DetermineDiskEncryptionStatus(profiles []HostMDMAppleProfile, fileVaultIdentifier string) {
+// identifier is received as an argument to avoid a circular dependency.
+//
+// NOTE: This overwrites both OSSettings and MacOSSettings on the MDMHostData struct. Any existing
+// data in those fields will be lost.
+func (d *MDMHostData) PopulateOSSettingsAndMacOSSettings(profiles []HostMDMAppleProfile, fileVaultIdentifier string) {
 	var settings MDMHostMacOSSettings
 
 	var fvprof *HostMDMAppleProfile
@@ -425,16 +518,16 @@ func (d *MDMHostData) DetermineDiskEncryptionStatus(profiles []HostMDMAppleProfi
 	}
 	if fvprof != nil {
 		switch fvprof.OperationType {
-		case MDMAppleOperationTypeInstall:
+		case MDMOperationTypeInstall:
 			switch {
-			case fvprof.Status != nil && (*fvprof.Status == MDMAppleDeliveryVerifying || *fvprof.Status == MDMAppleDeliveryVerified):
+			case fvprof.Status != nil && (*fvprof.Status == MDMDeliveryVerifying || *fvprof.Status == MDMDeliveryVerified):
 				if d.rawDecryptable != nil && *d.rawDecryptable == 1 {
 					//  if a FileVault profile has been successfully installed on the host
 					//  AND we have fetched and are able to decrypt the key
-					switch {
-					case *fvprof.Status == MDMAppleDeliveryVerifying:
+					switch *fvprof.Status {
+					case MDMDeliveryVerifying:
 						settings.DiskEncryption = DiskEncryptionVerifying.addrOf()
-					case *fvprof.Status == MDMAppleDeliveryVerified:
+					case MDMDeliveryVerified:
 						settings.DiskEncryption = DiskEncryptionVerified.addrOf()
 					}
 				} else if d.rawDecryptable != nil {
@@ -451,10 +544,15 @@ func (d *MDMHostData) DetermineDiskEncryptionStatus(profiles []HostMDMAppleProfi
 					// if [a FileVault profile is pending to be installed or] the
 					// matching row in host_disk_encryption_keys has a field decryptable
 					// = NULL
-					settings.DiskEncryption = DiskEncryptionEnforcing.addrOf()
+					switch *fvprof.Status {
+					case MDMDeliveryVerifying, MDMDeliveryVerified:
+						settings.DiskEncryption = DiskEncryptionVerifying.addrOf()
+					case MDMDeliveryPending:
+						settings.DiskEncryption = DiskEncryptionEnforcing.addrOf()
+					}
 				}
 
-			case fvprof.Status != nil && *fvprof.Status == MDMAppleDeliveryFailed:
+			case fvprof.Status != nil && *fvprof.Status == MDMDeliveryFailed:
 				// if a FileVault profile failed to be installed [or removed]
 				settings.DiskEncryption = DiskEncryptionFailed.addrOf()
 
@@ -464,12 +562,12 @@ func (d *MDMHostData) DetermineDiskEncryptionStatus(profiles []HostMDMAppleProfi
 				settings.DiskEncryption = DiskEncryptionEnforcing.addrOf()
 			}
 
-		case MDMAppleOperationTypeRemove:
+		case MDMOperationTypeRemove:
 			switch {
-			case fvprof.Status != nil && *fvprof.Status == MDMAppleDeliveryVerifying:
+			case fvprof.Status != nil && *fvprof.Status == MDMDeliveryVerifying:
 				// successfully removed, same as if	no filevault profile was found
 
-			case fvprof.Status != nil && *fvprof.Status == MDMAppleDeliveryFailed:
+			case fvprof.Status != nil && *fvprof.Status == MDMDeliveryFailed:
 				// if a FileVault profile failed to be [installed or] removed
 				settings.DiskEncryption = DiskEncryptionFailed.addrOf()
 
@@ -480,21 +578,30 @@ func (d *MDMHostData) DetermineDiskEncryptionStatus(profiles []HostMDMAppleProfi
 		}
 	}
 	d.MacOSSettings = &settings
+
+	var hde HostMDMDiskEncryption
+	if settings.DiskEncryption != nil {
+		hde.Status = settings.DiskEncryption
+	}
+	if fvprof != nil {
+		hde.Detail = fvprof.Detail
+	}
+	d.OSSettings = &HostMDMOSSettings{DiskEncryption: hde}
 }
 
-func (d *MDMHostData) ProfileStatusFromDiskEncryptionState(currStatus *MDMAppleDeliveryStatus) *MDMAppleDeliveryStatus {
+func (d *MDMHostData) ProfileStatusFromDiskEncryptionState(currStatus *MDMDeliveryStatus) *MDMDeliveryStatus {
 	if d.MacOSSettings == nil || d.MacOSSettings.DiskEncryption == nil {
 		return currStatus
 	}
 	switch *d.MacOSSettings.DiskEncryption {
 	case DiskEncryptionActionRequired, DiskEncryptionEnforcing, DiskEncryptionRemovingEnforcement:
-		return &MDMAppleDeliveryPending
+		return &MDMDeliveryPending
 	case DiskEncryptionFailed:
-		return &MDMAppleDeliveryFailed
+		return &MDMDeliveryFailed
 	case DiskEncryptionVerifying:
-		return &MDMAppleDeliveryVerifying
+		return &MDMDeliveryVerifying
 	case DiskEncryptionVerified:
-		return &MDMAppleDeliveryVerified
+		return &MDMDeliveryVerified
 	default:
 		return currStatus
 	}
@@ -538,9 +645,9 @@ func (h *Host) IsDEPAssignedToFleet() bool {
 	return h.DEPAssignedToFleet != nil && *h.DEPAssignedToFleet
 }
 
-// IsElegibleForDEPMigration returns true if the host fulfills all requirements
+// IsEligibleForDEPMigration returns true if the host fulfills all requirements
 // for DEP migration from a third-party provider into Fleet.
-func (h *Host) IsElegibleForDEPMigration() bool {
+func (h *Host) IsEligibleForDEPMigration() bool {
 	return h.IsOsqueryEnrolled() &&
 		h.IsDEPAssignedToFleet() &&
 		h.MDMInfo.IsEnrolledInThirdPartyMDM()
@@ -549,27 +656,68 @@ func (h *Host) IsElegibleForDEPMigration() bool {
 // NeedsDEPEnrollment returns true if the host should be DEP enrolled into
 // fleet but it's currently unenrolled.
 func (h *Host) NeedsDEPEnrollment() bool {
-	return !h.MDMInfo.IsDEPFleetEnrolled() &&
+	return h.MDMInfo != nil && !h.MDMInfo.IsDEPFleetEnrolled() &&
 		!h.MDMInfo.IsManualFleetEnrolled() &&
 		!h.MDMInfo.IsEnrolledInThirdPartyMDM() &&
 		h.IsDEPAssignedToFleet()
 }
 
-// DisplayName returns ComputerName if it isn't empty. Otherwise, it returns Hostname if it isn't
+// IsEligibleForWindowsMDMEnrollment returns true if the host can be enrolled
+// in Fleet's Windows MDM (if it was enabled).
+func (h *Host) IsEligibleForWindowsMDMEnrollment() bool {
+	return h.FleetPlatform() == "windows" &&
+		h.IsOsqueryEnrolled() &&
+		!h.MDMInfo.IsEnrolledInThirdPartyMDM() &&
+		!h.MDMInfo.IsFleetEnrolled() &&
+		(h.MDMInfo == nil || !h.MDMInfo.IsServer)
+}
+
+// IsEligibleForWindowsMDMUnenrollment returns true if the host must be
+// unenrolled from Fleet's Windows MDM (if it MDM was disabled).
+func (h *Host) IsEligibleForWindowsMDMUnenrollment() bool {
+	return h.FleetPlatform() == "windows" &&
+		h.IsOsqueryEnrolled() &&
+		h.MDMInfo.IsFleetEnrolled() &&
+		(h.MDMInfo == nil || !h.MDMInfo.IsServer)
+}
+
+// IsEligibleForBitLockerEncryption checks if the host needs to enforce disk
+// encryption using Fleet MDM features.
+//
+// Note: the *Host structs needs disk encryption data and MDM data filled in to
+// perform the check.
+func (h *Host) IsEligibleForBitLockerEncryption() bool {
+	isServer := h.MDMInfo != nil && h.MDMInfo.IsServer
+	isWindows := h.FleetPlatform() == "windows"
+	needsEncryption := h.DiskEncryptionEnabled != nil && !*h.DiskEncryptionEnabled
+	encryptedWithoutKey := h.DiskEncryptionEnabled != nil && *h.DiskEncryptionEnabled && !h.MDM.EncryptionKeyAvailable
+
+	return isWindows &&
+		h.IsOsqueryEnrolled() &&
+		h.MDMInfo.IsFleetEnrolled() &&
+		!isServer &&
+		(needsEncryption || encryptedWithoutKey)
+}
+
+// HostDisplayName returns ComputerName if it isn't empty. Otherwise, it returns Hostname if it isn't
 // empty. If Hostname is empty and both HardwareSerial and HardwareModel are not empty, it returns a
 // composite string with HardwareModel and HardwareSerial. If all else fails, it returns an empty
 // string.
-func (h *Host) DisplayName() string {
+func HostDisplayName(ComputerName string, Hostname string, HardwareModel string, HardwareSerial string) string {
 	switch {
-	case h.ComputerName != "":
-		return h.ComputerName
-	case h.Hostname != "":
-		return h.Hostname
-	case h.HardwareModel != "" && h.HardwareSerial != "":
-		return fmt.Sprintf("%s (%s)", h.HardwareModel, h.HardwareSerial)
+	case ComputerName != "":
+		return ComputerName
+	case Hostname != "":
+		return Hostname
+	case HardwareModel != "" && HardwareSerial != "":
+		return fmt.Sprintf("%s (%s)", HardwareModel, HardwareSerial)
 	default:
 		return ""
 	}
+}
+
+func (h *Host) DisplayName() string {
+	return HostDisplayName(h.ComputerName, h.Hostname, h.HardwareModel, h.HardwareSerial)
 }
 
 type HostIssues struct {
@@ -589,8 +737,6 @@ type HostDetail struct {
 	Labels []*Label `json:"labels"`
 	// Packs is the list of packs the host is a member of.
 	Packs []*Pack `json:"packs"`
-	// Policies is the list of policies and whether it passes for the host
-	Policies *[]*HostPolicy `json:"policies,omitempty"`
 	// Batteries is the list of batteries for the host. It is a pointer to a
 	// slice so that when set, it gets marhsaled even if the slice is empty,
 	// but when unset, it doesn't get marshaled (e.g. we don't return that
@@ -724,6 +870,18 @@ func ExpandPlatform(platform string) []string {
 	}
 }
 
+// List of valid sources for HostDeviceMapping (host_emails table in the
+// database).
+const (
+	DeviceMappingGoogleChromeProfiles = "google_chrome_profiles"
+	DeviceMappingMDMIdpAccounts       = "mdm_idp_accounts"
+	DeviceMappingCustomInstaller      = "custom_installer" // set by fleetd via device-authenticated API
+	DeviceMappingCustomOverride       = "custom_override"  // set by user via user-authenticated API
+
+	DeviceMappingCustomPrefix      = "custom_" // if host_emails.source starts with this, replace with DeviceMappingCustomReplacement
+	DeviceMappingCustomReplacement = "custom"  // replaces a source that starts with CustomPrefix - in the UI, we want to display those as only "custom"
+)
+
 // HostDeviceMapping represents a mapping of a user email address to a host,
 // as reported by the specified source (e.g. Google Chrome Profiles).
 type HostDeviceMapping struct {
@@ -807,6 +965,9 @@ func (h *HostMDM) IsManualFleetEnrolled() bool {
 // it is in enrolled state for Fleet MDM, regardless of automatic or manual
 // enrollment method.
 func (h *HostMDM) IsFleetEnrolled() bool {
+	if h == nil {
+		return false
+	}
 	return h.IsDEPFleetEnrolled() || h.IsManualFleetEnrolled()
 }
 
@@ -824,6 +985,7 @@ const (
 	UnknownMDMName        = ""
 	WellKnownMDMKandji    = "Kandji"
 	WellKnownMDMJamf      = "Jamf"
+	WellKnownMDMJumpCloud = "JumpCloud"
 	WellKnownMDMVMWare    = "VMware Workspace ONE"
 	WellKnownMDMIntune    = "Intune"
 	WellKnownMDMSimpleMDM = "SimpleMDM"
@@ -833,7 +995,9 @@ const (
 var mdmNameFromServerURLChecks = map[string]string{
 	"kandji":    WellKnownMDMKandji,
 	"jamf":      WellKnownMDMJamf,
+	"jumpcloud": WellKnownMDMJumpCloud,
 	"airwatch":  WellKnownMDMVMWare,
+	"awmdm":     WellKnownMDMVMWare,
 	"microsoft": WellKnownMDMIntune,
 	"simplemdm": WellKnownMDMSimpleMDM,
 	"fleetdm":   WellKnownMDMFleet,
@@ -896,6 +1060,7 @@ func (h *HostMDM) UnmarshalJSON(b []byte) error {
 // HostBattery represents a host's battery, as reported by the osquery battery
 // table.
 type HostBattery struct {
+	ID           uint   `json:"-" db:"id"`
 	HostID       uint   `json:"-" db:"host_id"`
 	SerialNumber string `json:"-" db:"serial_number"`
 	CycleCount   int    `json:"cycle_count" db:"cycle_count"`
@@ -986,7 +1151,16 @@ type OSVersions struct {
 	OSVersions      []OSVersion `json:"os_versions"`
 }
 
+type VulnerableOS struct {
+	OSVersion
+	ResolvedInVersion *string `json:"resolved_in_version"`
+}
+
 type OSVersion struct {
+	// ID is the unique id of the operating system.
+	ID uint `json:"id,omitempty"`
+	// OSVersionID is a uniqe NameOnly/Version combination for the operating system.
+	OSVersionID uint `json:"os_version_id"`
 	// HostsCount is the number of hosts that have reported the operating system.
 	HostsCount int `json:"hosts_count"`
 	// Name is the name and alphanumeric version of the operating system. e.g., "Microsoft Windows 11 Enterprise",
@@ -999,8 +1173,12 @@ type OSVersion struct {
 	Version string `json:"version"`
 	// Platform is the platform of the operating system, e.g., "windows", "ubuntu", or "darwin".
 	Platform string `json:"platform"`
-	// ID is the unique id of the operating system.
-	ID uint `json:"os_id,omitempty"`
+	// GeneratedCPE is the Common Platform Enumeration (CPE) name for the operating system.
+	// It is currently only generated for Operating Systems scanned for vulnerabilities
+	// in NVD (macOS only)
+	GeneratedCPEs []string `json:"generated_cpes,omitempty"`
+	// Vulnerabilities are the vulnerabilities associated with the operating system.
+	Vulnerabilities Vulnerabilities `json:"vulnerabilities"`
 }
 
 type HostDetailOptions struct {
@@ -1016,10 +1194,13 @@ type EnrollHostLimiter interface {
 }
 
 type HostMDMCheckinInfo struct {
-	HardwareSerial   string `json:"hardware_serial" db:"hardware_serial"`
-	InstalledFromDEP bool   `json:"installed_from_dep" db:"installed_from_dep"`
-	DisplayName      string `json:"display_name" db:"display_name"`
-	TeamID           uint   `json:"team_id" db:"team_id"`
+	HardwareSerial        string `json:"hardware_serial" db:"hardware_serial"`
+	InstalledFromDEP      bool   `json:"installed_from_dep" db:"installed_from_dep"`
+	DisplayName           string `json:"display_name" db:"display_name"`
+	TeamID                uint   `json:"team_id" db:"team_id"`
+	DEPAssignedToFleet    bool   `json:"dep_assigned_to_fleet" db:"dep_assigned_to_fleet"`
+	OsqueryEnrolled       bool   `json:"osquery_enrolled" db:"osquery_enrolled"`
+	SCEPRenewalInProgress bool   `json:"-" db:"scep_renewal_in_progress"`
 }
 
 type HostDiskEncryptionKey struct {
@@ -1051,4 +1232,18 @@ type HostMacOSProfile struct {
 	Identifier string `json:"identifier" db:"identifier"`
 	// InstallDate is the date the profile was installed on the host as reported by the host's clock.
 	InstallDate time.Time `json:"install_date" db:"install_date"`
+}
+
+// HostLite contains a subset of Host fields.
+type HostLite struct {
+	ID                  uint      `db:"id"`
+	TeamID              *uint     `db:"team_id"`
+	Hostname            string    `db:"hostname"`
+	OsqueryHostID       string    `db:"osquery_host_id"`
+	NodeKey             string    `db:"node_key"`
+	UUID                string    `db:"uuid"`
+	HardwareSerial      string    `db:"hardware_serial"`
+	SeenTime            time.Time `db:"seen_time"`
+	DistributedInterval uint      `db:"distributed_interval"`
+	ConfigTLSRefresh    uint      `db:"config_tls_refresh"`
 }

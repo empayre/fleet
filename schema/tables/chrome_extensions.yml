@@ -57,8 +57,8 @@ columns:
       - windows
       - linux
   - name: path
-    type: string
-    description: Defaults to '' on ChromeOS
+    type: text
+    description: Path to extension folder. Defaults to '' on ChromeOS
   - name: optional_permissions
     platforms: 
       - darwin
@@ -85,7 +85,7 @@ columns:
       - windows
       - linux
   - name: state
-    type: string
+    type: text
   - name: install_time
     platforms: 
       - darwin
@@ -106,3 +106,5 @@ columns:
       - darwin
       - windows
       - linux
+notes: |
+  - On ChromeOS, this table requires the [fleetd Chrome extension](https://fleetdm.com/docs/using-fleet/chromeos).

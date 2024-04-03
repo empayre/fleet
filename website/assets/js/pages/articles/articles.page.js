@@ -23,7 +23,7 @@ parasails.registerPage('articles', {
     } else {
       switch(this.category) {
         // If a specific category was provided, we'll set the articleCategory and categoryDescription.
-        case 'device-management':
+        case 'success-stories':
           this.articleCategory = 'Success stories';
           this.categoryDescription = 'Read about how others are using Fleet and osquery.';
           break;
@@ -46,10 +46,6 @@ parasails.registerPage('articles', {
         case 'announcements':
           this.articleCategory = 'Announcements';
           this.categoryDescription = 'The latest news from Fleet.';
-          break;
-        case 'deploy':
-          this.articleCategory = 'Deployment guides';
-          this.categoryDescription = 'Learn more about how to deploy Fleet.';
           break;
         case 'podcasts':
           this.articleCategory = 'Podcasts';
@@ -98,6 +94,21 @@ parasails.registerPage('articles', {
         this.sortArticlesByDate();
       }
       this.filter = filter;
-    }
+    },
+    clickCopyRssLink: function(articleCategory) {
+      let rssButton = $('a[purpose="rss-button"]');
+      if(typeof navigator.clipboard !== 'undefined' && rssButton) {
+        // If this heading has already been clicked and still has the copied class we'll just ignore this click
+        if(!$(rssButton).hasClass('copied')) {
+          navigator.clipboard.writeText('https://fleetdm.com/rss/'+articleCategory);
+          // Add the copied class to the header to notify the user that the link has been copied.
+          $(rssButton).addClass('copied');
+          // Remove the copied class 5 seconds later, so we can notify the user again if they re-cick on this heading
+          setTimeout(()=>{$(rssButton).removeClass('copied');}, 5000);
+        }
+      } else {
+        window.open('https://fleetdm.com/rss/'+articleCategory, '_blank');
+      }
+    },
   }
 });

@@ -35,6 +35,11 @@ func (s *SwiftDialogDownloader) GetConfig() (*fleet.OrbitConfig, error) {
 		return nil, nil
 	}
 
+	if s.UpdateRunner == nil {
+		log.Debug().Msg("SwiftDialogDownloader received nil UpdateRunner, this probably indicates that updates are turned off. Skipping any actions related to swiftDialog")
+		return cfg, nil
+	}
+
 	if !cfg.Notifications.NeedsMDMMigration && !cfg.Notifications.RenewEnrollmentProfile {
 		return cfg, nil
 	}
@@ -49,7 +54,7 @@ func (s *SwiftDialogDownloader) GetConfig() (*fleet.OrbitConfig, error) {
 		// we don't want to keep swiftDialog as a target if we failed to update the
 		// cached hashes in the runner.
 		if err := s.UpdateRunner.StoreLocalHash("swiftDialog"); err != nil {
-			log.Debug().Msgf("removing swiftDialog from target options, error updating local hashes: %e", err)
+			log.Debug().Msgf("removing swiftDialog from target options, error updating local hashes: %s", err)
 			s.UpdateRunner.RemoveRunnerOptTarget("swiftDialog")
 			s.UpdateRunner.updater.RemoveTargetInfo("swiftDialog")
 			return cfg, err

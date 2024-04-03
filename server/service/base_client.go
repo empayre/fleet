@@ -37,10 +37,14 @@ type baseClient struct {
 	clientCapabilities fleet.CapabilityMap
 }
 
+// parseResponse processes the status code and parses the response body.
+// It does not close the response body (should be closed by the caller).
 func (bc *baseClient) parseResponse(verb, path string, response *http.Response, responseDest interface{}) error {
 	switch response.StatusCode {
 	case http.StatusNotFound:
-		return notFoundErr{}
+		return notFoundErr{
+			msg: extractServerErrorText(response.Body),
+		}
 	case http.StatusUnauthorized:
 		return ErrUnauthenticated
 	case http.StatusPaymentRequired:
@@ -59,7 +63,7 @@ func (bc *baseClient) parseResponse(verb, path string, response *http.Response, 
 
 	bc.setServerCapabilities(response)
 
-	if responseDest != nil {
+	if responseDest != nil && response.StatusCode != http.StatusNoContent {
 		b, err := io.ReadAll(response.Body)
 		if err != nil {
 			return fmt.Errorf("reading response body: %w", err)

@@ -4,6 +4,7 @@ const DEFAULT_CONFIG_MOCK: IConfig = {
   org_info: {
     org_name: "fleet",
     org_logo_url: "",
+    org_logo_url_light_background: "",
     contact_url: "https://fleetdm.com/company/contact",
   },
   server_settings: {
@@ -11,6 +12,8 @@ const DEFAULT_CONFIG_MOCK: IConfig = {
     live_query_disabled: false,
     enable_analytics: true,
     deferred_save_host: false,
+    query_reports_disabled: false,
+    scripts_disabled: false,
   },
   smtp_settings: {
     enable_smtp: false,
@@ -73,6 +76,7 @@ const DEFAULT_CONFIG_MOCK: IConfig = {
   integrations: {
     jira: [],
     zendesk: [],
+    google_calendar: [],
   },
   logging: {
     debug: false,
@@ -124,6 +128,8 @@ const DEFAULT_CONFIG_MOCK: IConfig = {
   },
   fleet_desktop: { transparency_url: "https://fleetdm.com/transparency" },
   mdm: {
+    enable_disk_encryption: false,
+    windows_enabled_and_configured: true,
     apple_bm_default_team: "Apples",
     apple_bm_enabled_and_configured: true,
     apple_bm_terms_expired: false,
@@ -140,11 +146,16 @@ const DEFAULT_CONFIG_MOCK: IConfig = {
       bootstrap_package: "",
       enable_end_user_authentication: false,
       macos_setup_assistant: null,
+      enable_release_device_manually: false,
     },
     macos_migration: {
       enable: false,
       mode: "",
       webhook_url: "",
+    },
+    windows_updates: {
+      deadline_days: null,
+      grace_period_days: null,
     },
     end_user_authentication: {
       entity_id: "",

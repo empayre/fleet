@@ -353,7 +353,7 @@ func ValidatePasswordRequirements(password string) error {
 		return nil
 	}
 
-	return errors.New("Password does not meet required criteria")
+	return errors.New("Password does not meet required criteria: Must include 12 characters, at least 1 number (e.g. 0 - 9), and at least 1 symbol (e.g. &*#).")
 }
 
 // ValidateEmail checks that the provided email address is valid, this function
@@ -404,9 +404,13 @@ func saltAndHashPassword(keySize int, plaintext string, cost int) (hashed []byte
 		return nil, "", err
 	}
 
+	salt = salt[:keySize]
 	withSalt := []byte(fmt.Sprintf("%s%s", plaintext, salt))
 	hashed, err = bcrypt.GenerateFromPassword(withSalt, cost)
 	if err != nil {
+		if errors.Is(err, bcrypt.ErrPasswordTooLong) {
+			return nil, "", NewInvalidArgumentError("Could not create user. Password is over the 48 characters limit. If the password is under 48 characters, please check the auth_salt_key_size in your Fleet server config.", "password too long")
+		}
 		return nil, "", err
 	}
 

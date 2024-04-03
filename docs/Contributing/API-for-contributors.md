@@ -8,10 +8,13 @@
 - [Device-authenticated routes](#device-authenticated-routes)
 - [Downloadable installers](#downloadable-installers)
 - [Setup](#setup)
+- [Scripts](#scripts)
 
-This document includes the Fleet API routes that are helpful when developing or contributing to Fleet.
+This document includes the internal Fleet API routes that are helpful when developing or contributing to Fleet.
 
-Unlike the [Fleet REST API documentation](https://fleetdm.com/docs/using-fleet/rest-api), only the Fleet UI, Fleet Desktop, and `fleetctl` clients use the API routes in this document:
+These endpoints are used by the Fleet UI, Fleet Desktop, and `fleetctl` clients and will frequently change to reflect current functionality.
+
+If you are interested in gathering information from Fleet in a production environment, please see the [public Fleet REST API documentation](https://fleetdm.com/docs/using-fleet/rest-api).
 
 ## Packs
 
@@ -526,11 +529,12 @@ The MDM endpoints exist to support the related command-line interface sub-comman
 
 - [Generate Apple DEP Key Pair](#generate-apple-dep-key-pair)
 - [Request Certificate Signing Request (CSR)](#request-certificate-signing-request-csr)
-- [Batch-apply Apple MDM custom settings](#batch-apply-apple-mdm-custom-settings)
+- [Batch-apply MDM custom settings](#batch-apply-mdm-custom-settings)
 - [Initiate SSO during DEP enrollment](#initiate-sso-during-dep-enrollment)
 - [Complete SSO during DEP enrollment](#complete-sso-during-dep-enrollment)
 - [Preassign profiles to devices](#preassign-profiles-to-devices)
 - [Match preassigned profiles](#match-preassigned-profiles)
+- [Get FileVault statistics](#get-filevault-statistics)
 
 ### Generate Apple DEP Key Pair
 
@@ -544,7 +548,7 @@ None.
 
 ##### Default response
 
-```
+```json
 {
   "public_key": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUNzVENDQVptZ0F3SUJBZ0lCQVRBTkJna3Foa2lHOXcwQkFRc0ZBREFTTVJBd0RnWURWUVFERXdkR2JHVmwKZEVSTk1CNFhEVEl5TVRJeE16RTFNREl6TmxvWERUSXpNREV4TWpFMU1USXpObG93RWpFUU1BNEdBMVVFQXhNSApSbXhsWlhSRVRUQ0NBU0l3RFFZSktvWklodmNOQVFFQkJRQURnZ0VQQURDQ0FRb0NnZ0VCQU1jbXIxOVNiQUhaCnVZNnJBa254dVBCV0tkSFlrSXpJY2JGMHErZ0ZKZVU3cUlwU0FQWFhmeUpFTXpyQXhpZStPSi9QSXhkTHZTZVoKdXA2Qzg5VHM1VEwrWjhKZmR3T2ZLQVFIUWpyQVpGZkxkdUh0SjNRZnk3di9rbmZ3VzNNSU9XZ00zcDQ3a0xzOAowZnJzNmVuTlpXZElsNUMyV1NpOXVGVVVQcFJTbm1Ha1AvK2QydmNCaWdIOHQ0K3RuV3NYdjhpekxqcHhhanV6CjN0Vlp3SFA0cjBQZTdIM0I0eDZINmlKZmxRZzI4Z3owbDZWa0c2NjVKT2NMLzlDSmNtOWpWRmpxb0RmZTVjUFAKMVFNbFpyb1FCaFhOUHN3bEhRWTkzekJFK3VSRUVNL1N1d0dZcGZLYjQwSDM0S1B1U3Y5SXZHTjIzTXdNM01FMwppNEFBWGJQOGZNTUNBd0VBQWFNU01CQXdEZ1lEVlIwUEFRSC9CQVFEQWdXZ01BMEdDU3FHU0liM0RRRUJDd1VBCkE0SUJBUUM5ZFcyRXBxemp1VWhhbk1CSXJpK09VWVhrekR2eVB6bGxTMXd0UVdQQ0s4cFJ5Rk5TM3RkakVXT2kKSTcyOVh2UmtpNjhNZStqRlpxSkxFWHpWUlkwb29aSWhhcG5lNUZoNzlCbkIrWGl6TFQ0TStDNHJ5RVQwOXg4SQpaWHJuY1BKME9ueUdVemlFK0szWEI2dVNLeWN1a3pZci9sRVBBMGlQRTZpM0dNYjljenJFL2NOQURrRXZwcjU2CjN1SFdMU3hwK1U5QmJyaTNDSXBoR1NvSWxnTVBEaUE1RkpiOXc0SnlMK0crZ3Q4c1BlcUZkZDYyRDRpV3U5a0wKMVZBUjRSU2xPcWt1cTVXREZVcUxsVGJFMS9oY1lqcVVUczRrSWhENmN6MkcxQlBnMUU2WVpRZWp6U0ZpeGR1MApYUy9UTTByUFBKNithUC82V1BNRWpJcGVRcmNvCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
   "private_key": "LS0tLS1CRUdJTiBSU0EgUFJJVkFURSBLRVktLS0tLQpNSUlFb3dJQkFBS0NBUUVBeHlhdlgxSnNBZG01anFzQ1NmRzQ4RllwMGRpUWpNaHhzWFNyNkFVbDVUdW9pbElBCjlkZC9Ja1F6T3NER0o3NDRuODhqRjB1OUo1bTZub0x6MU96bE12NW53bDkzQTU4b0JBZENPc0JrVjh0MjRlMG4KZEIvTHUvK1NkL0JiY3dnNWFBemVuanVRdXp6Uit1enA2YzFsWjBpWGtMWlpLTDI0VlJRK2xGS2VZYVEvLzUzYQo5d0dLQWZ5M2o2MmRheGUveUxNdU9uRnFPN1BlMVZuQWMvaXZROTdzZmNIakhvZnFJbCtWQ0RieURQU1hwV1FiCnJya2s1d3YvMElseWIyTlVXT3FnTjk3bHc4L1ZBeVZtdWhBR0ZjMCt6Q1VkQmozZk1FVDY1RVFRejlLN0FaaWwKOHB2alFmZmdvKzVLLzBpOFkzYmN6QXpjd1RlTGdBQmRzL3g4d3dJREFRQUJBb0lCQUZRMUFFeGU3bnB0MUc4RgowZ2J3SlpIQjdSYms2bUlNMHo0RXBqZUtEYmI2M2MzMjFKOGV5b3Z6cUhHOFYwMHd1b0tnTkNkQ2lDMjVhOVpnCmFyZHFuNU5MVFJZOEJYZkxrVUQ2ekw5STRHVGJERjZGUjN4cmdWcnh1cjNxTE5EYjltSVBwd1hqQzlTUDUvMmcKdFZ0OTFOV3lOUndrYmxpeXQ4R0p1TmhBZ3VXbnJLQmw5b3o1QkpCU3JLZTJPUE5ERm5mbUs1NFM1VzRKakZZMApFTUV3Z2ZiL2xQZjluWFZwRG9QeEl3QnJmRU5oU3oxcVI0bzJPbVFyRGNOQUNZU05razRjbXVIMHpxc3J5aFg4CkNhajhCcllOemxaeGNPTmpmK1NxUkdvVndjdzZKbzNKazBEREZHeEVaOHBEUThJTXgzRUQ1SE4rbW1SaGRMQmoKT0pRZVhVRUNnWUVBeWZDaFArSVNzMGNtcEM3WUFrK1UrVHNTTElnY3BTTHdReFF2RGFmRWFtMHJoWDJQdDk1ZgpJN1NCTlM3TmlNR0xCVk4rWHg0RHlsT3RYaGNzTm5YUU5qU3J3ZFNHTGxFbU5wWDJXR0x4Znp4REVVbFFSS3FEClY2RHBDaHdmY2tCTFRUNkVaRDlnV21DOGZIYUNPc0JDUHR1VStLQUpFa1FRaVk1VlRLSjYrMkVDZ1lFQS9IYnQKKzIvWFJzSW84VkE4QmhjMitDYyt4YUNrK3dvTVByZ0d4OWxrMTR2R0hDcCtDY2ZGZThqU2NHMDhzU3RKTnJCVgp0cHgvbm1yYklyMzUxVkxlMFNLQ2R2aHF5ajBXQWlWVDhDL0VjcUxGV0VwNG5mY1ZnVHIxRjBGMUptR0Y4WVNYCk41VEh4Tnc4VjZLUDVmWEM2dVVFMkNpZnR1bkxqSGFSNXZCakxxTUNnWUVBdlNjTE0zYUVRNjlTejVrZE5sVHEKMnVUczZnOTRuV256bVRGdnZaKzJ5R1dIelp0R0lsbEZ6b0VHUWhXYjZndzROdjMxTWcxQVNhVkZrQXV1bXppUgpsaVNSK1pZak5ZRkhoUHZFNnhlSzA3NVRwLzUvRkVLUGttWWp3eGVDa1JjT01jVnNaeVpDRDRYcko3NHR6L0JFClhQSjdRTU5PbS9CcmVSMThZck1TOVNFQ2dZQjhqZnhaV1ZNL1FKbE1mTVl3UnhIQ21qSVk5R21ReE9OSHFpa0cKUGhYSFZkazJtaXcyalEyOFJWYTFTdDl2bFNoNHg4Ung1SUg5MlVBbHdzNVlWWnRDV0tFL0tzNGMyc2haNUtxbAp6QnRDWjFXdmVvWkpnTlptUEgwZ3JSV3NDdDgzU2JBRkp1enNEYS9qbUhzZi9BRGZQSUFJV1BwN0ZwdHF3REM1ClhBM0N1d0tCZ0c0QVVmMUZralNYRFBlL2JoVjhtZG4rZCtzN2g2RjZkRWttNnEya1dyS1B4V2lFdlN3QlZEQWoKQjhIRlNtNW1pcHNTTXhQbFVEZDRPSXRSUzVUM1AwcStRZENZNkwzemhmSFBCUzdhTlZaRUJXdVNlY2lDRk0wSQo3MjFSK081TitMTlFwN1N6VWUxRll1WWdhandFSE9KMW82d1ArZWloMmQyVVQyQ09Ed1NrCi0tLS0tRU5EIFJTQSBQUklWQVRFIEtFWS0tLS0tCg=="
@@ -570,7 +574,7 @@ Note that the `public_key` and `private_key` are base64 encoded and should be de
 
 ##### Default response
 
-```
+```json
 {
   "apns_key": "aGV5LCBJJ20gc2VjcmV0Cg==",
   "scep_cert": "bHR5LCBJJ20gc2VjcmV0Cg=",
@@ -582,24 +586,25 @@ Note that the response fields are base64 encoded and should be decoded before wr
 Once base64-decoded, they are PEM-encoded certificate and keys.
 
 
-### Batch-apply Apple MDM custom settings
+### Batch-apply MDM custom settings
 
-`POST /api/v1/fleet/mdm/apple/profiles/batch`
+`POST /api/v1/fleet/mdm/profiles/batch`
 
 #### Parameters
 
 | Name      | Type   | In    | Description                                                                                                                       |
 | --------- | ------ | ----- | --------------------------------------------------------------------------------------------------------------------------------- |
-| team_id   | number | query | _Available in Fleet Premium_ The team ID to apply the custom settings to. Only one of team_name/team_id can be provided.          |
-| team_name | string | query | _Available in Fleet Premium_ The name of the team to apply the custom settings to. Only one of team_name/team_id can be provided. |
+| team_id   | number | query | _Available in Fleet Premium_ The team ID to apply the custom settings to. Only one of `team_name`/`team_id` can be provided.          |
+| team_name | string | query | _Available in Fleet Premium_ The name of the team to apply the custom settings to. Only one of `team_name`/`team_id` can be provided. |
 | dry_run   | bool   | query | Validate the provided profiles and return any validation errors, but do not apply the changes.                                    |
-| profiles  | json   | body  | An array of strings, the base64-encoded .mobileconfig files to apply.                                                             |
+| profiles  | json   | body  | An array of objects, consisting of a `profile` base64-encoded .mobileconfig (macOS) or XML (Windows) file, `labels` array of strings (label names), and `name` display name (only for Windows configuration profiles).                                        |
 
-If no team (id or name) is provided, the profiles are applied for all hosts (for _Fleet Free_) or for hosts that are not part of a team (for _Fleet Premium_). After the call, the provided list of `profiles` will be the active profiles for that team (or no team) - that is, any existing profile that is not part of that list will be removed, and an existing profile with the same payload identifier as a new profile will be edited. If the list of provided `profiles` is empty, all profiles are removed for that team (or no team).
+
+If no team (id or name) is provided, the profiles are applied for all hosts (for _Fleet Free_) or for hosts that are not assigned to any team (for _Fleet Premium_). After the call, the provided list of `profiles` will be the active profiles for that team (or no team) - that is, any existing profile that is not part of that list will be removed, and an existing profile with the same payload identifier (macOS) as a new profile will be edited. If the list of provided `profiles` is empty, all profiles are removed for that team (or no team).
 
 #### Example
 
-`POST /api/v1/fleet/mdm/apple/profiles/batch`
+`POST /api/v1/fleet/mdm/profiles/batch`
 
 ##### Default response
 
@@ -621,7 +626,7 @@ None.
 
 ##### Default response
 
-```
+```json
 {
   "url": "https://idp-provider.com/saml?SAMLRequest=...",
 }
@@ -671,12 +676,13 @@ This endpoint stores a profile to be assigned to a host at some point in the fut
 
 #### Parameters
 
-| Name                     | Type   | In   | Description                                                                                  |
-| ------------             | ------ | ---- | -----------------------------------------------------------                                  |
-| external_host_identifier | string | body | **Required**. The identifier of the host as generated by the external service (e.g. Puppet). |
-| host_uuid                | string | body | **Required**. The UUID of the host.                                                          |
-| profile                  | string | body | **Required**. The base64-encoded .mobileconfig content of the MDM profile.                   |
-| group                    | string | body | The group label associated with that profile. This information is used to generate team names if they need to be created. |
+| Name                     | Type    | In   | Description                                                                                  |
+| ------------             | ------- | ---- | -----------------------------------------------------------                                  |
+| external_host_identifier | string  | body | **Required**. The identifier of the host as generated by the external service (e.g. Puppet). |
+| host_uuid                | string  | body | **Required**. The UUID of the host.                                                          |
+| profile                  | string  | body | **Required**. The base64-encoded .mobileconfig content of the MDM profile.                   |
+| group                    | string  | body | The group label associated with that profile. This information is used to generate team names if they need to be created. |
+| exclude                  | boolean | body | Whether to skip delivering the profile to this host. |
 
 #### Example
 
@@ -689,7 +695,8 @@ This endpoint stores a profile to be assigned to a host at some point in the fut
   "external_host_identifier": "id-01234",
   "host_uuid": "c0532a64-bec2-4cf9-aa37-96fe47ead814",
   "profile": "<base64-encoded profile>",
-  "group": "Workstations"
+  "group": "Workstations",
+  "exclude": false
 }
 ```
 
@@ -697,11 +704,49 @@ This endpoint stores a profile to be assigned to a host at some point in the fut
 
 `Status: 204`
 
+### Get FileVault statistics
+
+_Available in Fleet Premium_
+
+Get aggregate status counts of disk encryption enforced on macOS hosts.
+
+The summary can optionally be filtered by team id.
+
+`GET /api/v1/fleet/mdm/apple/filevault/summary`
+
+#### Parameters
+
+| Name                      | Type   | In    | Description                                                               |
+| ------------------------- | ------ | ----- | ------------------------------------------------------------------------- |
+| team_id                   | string | query | _Available in Fleet Premium_ The team id to filter the summary.            |
+
+#### Example
+
+Get aggregate status counts of Apple disk encryption profiles applying to macOS hosts enrolled to Fleet's MDM that are not assigned to any team.
+
+`GET /api/v1/fleet/mdm/apple/filevault/summary`
+
+##### Default response
+
+`Status: 200`
+
+```json
+{
+  "verified": 123,
+  "verifying": 123,
+  "action_required": 123,
+  "enforcing": 123,
+  "failed": 123,
+  "removing_enforcement": 123
+}
+```
+
+
 ### Match preassigned profiles
 
 _Available in Fleet Premium_
 
-This endpoint uses the profiles stored by the [Preassign profiles to devices][#preassign-profiles-to-devices] endpoint to match the set of profiles to an existing team if possible, creating one if none exists. It then assigns the host to that team so that it receives the associated profiles. It is meant to be called only once all desired profiles have been pre-assigned to the host.
+This endpoint uses the profiles stored by the [Preassign profiles to devices](#preassign-profiles-to-devices) endpoint to match the set of profiles to an existing team if possible, creating one if none exists. It then assigns the host to that team so that it receives the associated profiles. It is meant to be called only once all desired profiles have been pre-assigned to the host.
 
 `POST /api/v1/fleet/mdm/apple/profiles/match`
 
@@ -814,6 +859,8 @@ Returns the name, description, and SQL of the query specified by name.
 
 Creates and/or modifies the queries included in the list. To modify an existing query, the name of the query must already be used by an existing query. If a query with the specified name doesn't exist in Fleet, a new query will be created.
 
+If a query field is not specified in the "spec" then its default value depending on its type will be assumed, e.g. if `interval` is not set then `0` will be assumed, if `discard_data` is omitted then `false` will be assumed, etc.
+
 `POST /api/v1/fleet/spec/queries`
 
 #### Parameters
@@ -821,6 +868,8 @@ Creates and/or modifies the queries included in the list. To modify an existing 
 | Name  | Type | In   | Description                                                      |
 | ----- | ---- | ---- | ---------------------------------------------------------------- |
 | specs | list | body | **Required.** The list of the queries to be created or modified. |
+
+For more information about the query fields, please refer to the [Create query endpoint](https://fleetdm.com/docs/using-fleet/rest-api#create-query).
 
 #### Example
 
@@ -1232,7 +1281,10 @@ If the `name` is not already associated with an existing team, this API route cr
 | mdm.macos_updates.minimum_version         | string | body  | The required minimum operating system version.                                                                                                                                                                                      |
 | mdm.macos_updates.deadline                | string | body  | The required installation date for Nudge to enforce the operating system version.                                                                                                                                                   |
 | mdm.macos_settings                        | object | body  | The macOS-specific MDM settings.                                                                                                                                                                                                    |
-| mdm.macos_settings.custom_settings        | list   | body  | The list of .mobileconfig files to apply to hosts that belong to this team.                                                                                                                                                         |
+| mdm.macos_settings.custom_settings        | list   | body  | The list of objects consists of a `path` to .mobileconfig file and `labels` list of label names.                                                                                                                                                         |
+| mdm.windows_settings                        | object | body  | The Windows-specific MDM settings.                                                                                                                                                                                                    |
+| mdm.windows_settings.custom_settings        | list   | body  | The list of objects consists of a `path` to XML files and `labels` list of label names.                                                                                                                                                         |
+| scripts                                   | list   | body  | A list of script files to add to this team so they can be executed at a later time.                                                                                                                                                 |
 | mdm.macos_settings.enable_disk_encryption | bool   | body  | Whether disk encryption should be enabled for hosts that belong to this team.                                                                                                                                                       |
 | force                                     | bool   | query | Force apply the spec even if there are (ignorable) validation errors. Those are unknown keys and agent options-related validations.                                                                                                 |
 | dry_run                                   | bool   | query | Validate the provided JSON for unknown keys and invalid value types and return any validation errors, but do not apply the changes.                                                                                                 |
@@ -1291,10 +1343,20 @@ If the `name` is not already associated with an existing team, this API route cr
           "deadline": "2023-12-01"
         },
         "macos_settings": {
-          "custom_settings": ["path/to/profile1.mobileconfig"],
+          "custom_settings": {
+            "path": "path/to/profile1.mobileconfig"
+            "labels": ["Label 1", "Label 2"]
+          },
           "enable_disk_encryption": true
+        },
+        "windows_settings": {
+          "custom_settings": {
+            "path": "path/to/profile1.xml"
+            "labels": ["Label 1", "Label 2"]
+          },
         }
-      }
+      },
+      "scripts": ["path/to/script.sh"],
     }
   ]
 }
@@ -1674,7 +1736,7 @@ Counts the number of online and offline hosts included in a given set of selecte
 | Name     | Type    | In   | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------- | ------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | query_id | integer | body | The saved query (if any) that will be run. The `observer_can_run` property on the query and the user's roles determine which targets are included.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| selected | object  | body | The object includes lists of selected host IDs (`selected.hosts`), label IDs (`selected.labels`), and team IDs (`selected.teams`). When provided, builtin label IDs, custom label IDs and team IDs become `AND` filters. Within each selector, selecting two or more teams, two or more builtin labels, or two or more custom labels, behave as `OR` filters. There's one special case for the builtin label "All hosts", if such label is selected, then all other label and team selectors are ignored (and all hosts will be selected). If a host ID is explicitly included in `selected.hosts`, then it is assured that the query will be selected to run on it (no matter the contents of `selected.labels` and `selected.teams`). See examples below. |
+| selected | object  | body | The object includes lists of selected host IDs (`selected.hosts`), label IDs (`selected.labels`), and team IDs (`selected.teams`). When provided, builtin label IDs, custom label IDs and team IDs become `AND` filters. Within each selector, selecting two or more teams, two or more builtin labels, or two or more custom labels, behave as `OR` filters. There's one special case for the builtin label "All hosts", if such label is selected, then all other label and team selectors are ignored (and all hosts will be selected). If a host ID is explicitly included in `selected.hosts`, then it is assured that the query will be selected to run on it (no matter the contents of `selected.labels` and `selected.teams`). Use `0` team ID to filter by hosts assigned to "No team". See examples below. |
 
 #### Example
 
@@ -1717,7 +1779,7 @@ After you initiate the query, [get results via WebSocket](#retrieve-live-query-r
 | -------- | ------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | query    | string  | body | The SQL if using a custom query.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | query_id | integer | body | The saved query (if any) that will be run. Required if running query as an observer. The `observer_can_run` property on the query effects which targets are included.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| selected | object  | body | **Required.** The object includes lists of selected host IDs (`selected.hosts`), label IDs (`selected.labels`), and team IDs (`selected.teams`). When provided, builtin label IDs, custom label IDs and team IDs become `AND` filters. Within each selector, selecting two or more teams, two or more builtin labels, or two or more custom labels, behave as `OR` filters. There's one special case for the builtin label "All hosts", if such label is selected, then all other label and team selectors are ignored (and all hosts will be selected). If a host ID is explicitly included in `selected.hosts`, then it is assured that the query will be selected to run on it (no matter the contents of `selected.labels` and `selected.teams`). See examples below. |
+| selected | object  | body | **Required.** The object includes lists of selected host IDs (`selected.hosts`), label IDs (`selected.labels`), and team IDs (`selected.teams`). When provided, builtin label IDs, custom label IDs and team IDs become `AND` filters. Within each selector, selecting two or more teams, two or more builtin labels, or two or more custom labels, behave as `OR` filters. There's one special case for the builtin label "All hosts", if such label is selected, then all other label and team selectors are ignored (and all hosts will be selected). If a host ID is explicitly included in `selected.hosts`, then it is assured that the query will be selected to run on it (no matter the contents of `selected.labels` and `selected.teams`). Use `0` team ID to filter by hosts assigned to "No team". See examples below. |
 
 One of `query` and `query_id` must be specified.
 
@@ -1916,7 +1978,7 @@ Note that live queries are automatically cancelled if this method is not called 
 
 #### Example script to handle request and response
 
-```
+```js
 const socket = new WebSocket('wss://<your-base-url>/api/v1/fleet/results/websocket');
 
 socket.onopen = () => {
@@ -2056,7 +2118,7 @@ Note that SockJS has been found to be substantially less reliable than the [stan
 
 #### Example script to handle request and response
 
-```
+```js
 const socket = new SockJS(`<your-base-url>/api/v1/fleet/results`, undefined, {});
 
 socket.onopen = () => {
@@ -2197,7 +2259,8 @@ currently pending.
 
 | Name | Type   | In    | Description                               |
 | ---- | ------ | ----- | ----------------------------------------- |
-| name | string | query | The name of the cron schedule to trigger. |
+| name | string | query | The name of the cron schedule to trigger. Supported trigger names are `apple_mdm_dep_profile_assigner`, `automations`, `cleanups_then_aggregation`, `integrations`, `mdm_apple_profile_manager`, `usage_statistics`, and `vulnerabilities`|
+
 
 #### Example
 
@@ -2213,7 +2276,6 @@ currently pending.
 
 Device-authenticated routes are routes used by the Fleet Desktop application. Unlike most other routes, Fleet user's API token does not authenticate them. They use a device-specific token.
 
-- [Get device's host](#get-devices-host)
 - [Refetch device's host](#refetch-devices-host)
 - [Get device's Google Chrome profiles](#get-devices-google-chrome-profiles)
 - [Get device's mobile device management (MDM) and Munki information](#get-devices-mobile-device-management-mdm-and-munki-information)
@@ -2222,198 +2284,8 @@ Device-authenticated routes are routes used by the Fleet Desktop application. Un
 - [Get device's transparency URL](#get-devices-transparency-url)
 - [Download device's MDM manual enrollment profile](#download-devices-mdm-manual-enrollment-profile)
 - [Migrate device to Fleet from another MDM solution](#migrate-device-to-fleet-from-another-mdm-solution)
-
-#### Get device's host
-
-Returns the host information about the device that makes the request.
-
-`GET /api/v1/fleet/device/{token}`
-
-##### Parameters
-
-| Name  | Type   | In   | Description                        |
-| ----- | ------ | ---- | ---------------------------------- |
-| token | string | path | The device's authentication token. |
-
-##### Example
-
-`GET /api/v1/fleet/device/abcdef012456789`
-
-##### Default response
-
-`Status: 200`
-
-```json
-{
-  "host": {
-    "created_at": "2021-08-19T02:02:22Z",
-    "updated_at": "2021-08-19T21:14:58Z",
-    "software": [
-      {
-        "id": 408,
-        "name": "osquery",
-        "version": "4.5.1",
-        "source": "rpm_packages",
-        "generated_cpe": "",
-        "vulnerabilities": null
-      },
-      {
-        "id": 1146,
-        "name": "tar",
-        "version": "1.30",
-        "source": "rpm_packages",
-        "generated_cpe": "",
-        "vulnerabilities": null
-      },
-      {
-        "id": 321,
-        "name": "SomeApp.app",
-        "version": "1.0",
-        "source": "apps",
-        "bundle_identifier": "com.some.app",
-        "last_opened_at": "2021-08-18T21:14:00Z",
-        "generated_cpe": "",
-        "vulnerabilities": null
-      }
-    ],
-    "id": 1,
-    "detail_updated_at": "2021-08-19T21:07:53Z",
-    "label_updated_at": "2021-08-19T21:07:53Z",
-    "last_enrolled_at": "2021-08-19T02:02:22Z",
-    "seen_time": "2021-08-19T21:14:58Z",
-    "refetch_requested": false,
-    "hostname": "23cfc9caacf0",
-    "uuid": "309a4b7d-0000-0000-8e7f-26ae0815ede8",
-    "platform": "rhel",
-    "osquery_version": "4.5.1",
-    "os_version": "CentOS Linux 8.3.2011",
-    "build": "",
-    "platform_like": "rhel",
-    "code_name": "",
-    "uptime": 210671000000000,
-    "memory": 16788398080,
-    "cpu_type": "x86_64",
-    "cpu_subtype": "158",
-    "cpu_brand": "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz",
-    "cpu_physical_cores": 12,
-    "cpu_logical_cores": 12,
-    "hardware_vendor": "",
-    "hardware_model": "",
-    "hardware_version": "",
-    "hardware_serial": "",
-    "computer_name": "23cfc9caacf0",
-    "display_name": "23cfc9caacf0",
-    "public_ip": "",
-    "primary_ip": "172.27.0.6",
-    "primary_mac": "02:42:ac:1b:00:06",
-    "distributed_interval": 10,
-    "config_tls_refresh": 10,
-    "logger_tls_period": 10,
-    "team_id": null,
-    "pack_stats": null,
-    "team_name": null,
-    "additional": {},
-    "gigs_disk_space_available": 46.1,
-    "percent_disk_space_available": 73,
-    "disk_encryption_enabled": true,
-    "dep_assigned_to_fleet": false,
-    "users": [
-      {
-        "uid": 0,
-        "username": "root",
-        "type": "",
-        "groupname": "root",
-        "shell": "/bin/bash"
-      },
-      {
-        "uid": 1,
-        "username": "bin",
-        "type": "",
-        "groupname": "bin",
-        "shell": "/sbin/nologin"
-      }
-    ],
-    "labels": [
-      {
-        "created_at": "2021-08-19T02:02:17Z",
-        "updated_at": "2021-08-19T02:02:17Z",
-        "id": 6,
-        "name": "All Hosts",
-        "description": "All hosts which have enrolled in Fleet",
-        "query": "SELECT 1;",
-        "platform": "",
-        "label_type": "builtin",
-        "label_membership_type": "dynamic"
-      },
-      {
-        "created_at": "2021-08-19T02:02:17Z",
-        "updated_at": "2021-08-19T02:02:17Z",
-        "id": 9,
-        "name": "CentOS Linux",
-        "description": "All CentOS hosts",
-        "query": "SELECT 1 FROM os_version WHERE platform = 'centos' OR name LIKE '%centos%'",
-        "platform": "",
-        "label_type": "builtin",
-        "label_membership_type": "dynamic"
-      },
-      {
-        "created_at": "2021-08-19T02:02:17Z",
-        "updated_at": "2021-08-19T02:02:17Z",
-        "id": 12,
-        "name": "All Linux",
-        "description": "All Linux distributions",
-        "query": "SELECT 1 FROM osquery_info WHERE build_platform LIKE '%ubuntu%' OR build_distro LIKE '%centos%';",
-        "platform": "",
-        "label_type": "builtin",
-        "label_membership_type": "dynamic"
-      }
-    ],
-    "packs": [],
-    "status": "online",
-    "display_text": "23cfc9caacf0",
-    "batteries": [
-      {
-        "cycle_count": 999,
-        "health": "Good"
-      }
-    ],
-    "mdm": {
-      "encryption_key_available": false,
-      "enrollment_status": null,
-      "name": "",
-      "server_url": null,
-      "macos_settings": {
-        "disk_encryption": null,
-        "action_required": null
-      },
-      "macos_setup": {
-        "bootstrap_package_status": "installed",
-        "detail": "",
-        "bootstrap_package_name": "test.pkg"
-      },
-      "profiles": [
-        {
-          "profile_id": 999,
-          "name": "profile1",
-          "status": "verifying",
-          "operation_type": "install",
-          "detail": ""
-        }
-      ]
-    }
-  },
-  "org_logo_url": "https://example.com/logo.jpg",
-  "license": {
-    "tier": "free",
-    "expiration": "2031-01-01T00:00:00Z"
-  },
-  "global_config": {
-    "mdm": {
-      "enabled_and_configured": false
-    }
-  }
-}
-```
+- [Trigger FileVault key escrow](#trigger-filevault-key-escrow)
+- [Report an agent error](#report-an-agent-error)
 
 #### Refetch device's host
 
@@ -2451,6 +2323,24 @@ Same as [Get host's mobile device management and Munki information](https://flee
 | ----- | ------ | ---- | ---------------------------------- |
 | token | string | path | The device's authentication token. |
 
+#### Ping Server with Device Token
+Ping the server. OK response expected if the device token is still valid.
+
+`HEAD /api/v1/fleet/device/{token}/ping`
+
+##### Parameters
+
+| Name  | Type   | In   | Description                        |
+| ----- | ------ | ---- | ---------------------------------- |
+| token | string | path | The device's authentication token. |
+
+##### Example
+
+`HEAD /api/v1/fleet/device/abcdef012456789/ping`
+
+##### Default response
+
+`Status: 200`
 
 #### Get Fleet Desktop information
 _Available in Fleet Premium_
@@ -2477,7 +2367,22 @@ Gets all information required by Fleet Desktop, this includes things like the nu
 {
   "failing_policies_count": 3,
   "notifications": {
-    "needs_mdm_migration": true
+    "needs_mdm_migration": true,
+    "renew_enrollment_profile": false,
+    "enforce_bitlocker_encryption": false,
+  },
+  "config": {
+    "org_info": {
+      "org_name": "Fleet",
+      "org_logo_url": "https://example.com/logo.jpg",
+      "org_logo_url_light_background": "https://example.com/logo-light.jpg",
+      "contact_url": "https://fleetdm.com/company/contact"
+    },
+    "mdm": {
+      "macos_migration": {
+        "mode": "forced"
+      }
+    }
   }
 }
 ```
@@ -2486,7 +2391,7 @@ In regards to the `notifications` key:
 
 - `needs_mdm_migration` means that the device fits all the requirements to allow the user to initiate an MDM migration to Fleet.
 - `renew_enrollment_profile` means that the device is currently unmanaged from MDM but should be DEP enrolled into Fleet.
-
+- `enforce_bitlocker_encryption` applies only to Windows devices and means that it should encrypt the disk and report the encryption key back to Fleet.
 
 
 #### Get device's policies
@@ -2645,6 +2550,54 @@ Signals the Fleet server to send a webbook request with the device UUID and seri
 
 ---
 
+#### Trigger FileVault key escrow
+
+Sends a signal to Fleet Desktop to initiate a FileVault key escrow. This is useful for setting the escrow key initially as well as in scenarios where a token rotation is required. **Requires Fleet Premium license**
+
+`POST /api/v1/fleet/device/{token}/rotate_encryption_key`
+
+##### Parameters
+
+| Name  | Type   | In   | Description                        |
+| ----- | ------ | ---- | ---------------------------------- |
+| token | string | path | The device's authentication token. |
+
+##### Example
+
+`POST /api/v1/fleet/device/abcdef012456789/rotate_encryption_key`
+
+##### Default response
+
+`Status: 204`
+
+
+### Report an agent error
+
+Notifies the server about an agent error, resulting in two outcomes:
+
+- The error gets saved in Redis and can later be accessed using `fleetctl debug archive`.
+- The server consistently replies with a `500` status code, which can serve as a signal to activate an alarm through a monitoring tool.
+
+> Note: to allow `fleetd` agents to use this endpoint, you need to set a [custom environment variable](./Configuration-for-contributors.md#fleet_enable_post_client_debug_errors)
+
+`POST /api/v1/fleet/device/{token}/debug/errors`
+
+#### Parameters
+
+| Name                  | Type     | Description                                                      |
+| --------------------- | -------- | ---------------------------------------------------------------- |
+| error_source          | string   | Process name that error originated from ex. orbit, fleet-desktop |
+| error_source_version  | string   | version of error_source                                          |
+| error_timestamp       | datetime | Time in UTC that error occured                                   |
+| error_message         | string   | error message                                                    |
+| error_additional_info | obj      | Any additional identifiers to assist debugging                   |
+
+##### Default response
+
+`Status: 500`
+
+---
+
 
 ## Downloadable installers
 
@@ -2670,7 +2623,7 @@ Downloads a pre-built fleet-osquery installer with the given parameters.
 
 ##### Default response
 
-```
+```http
 Status: 200
 Content-Type: application/octet-stream
 Content-Disposition: attachment
@@ -2778,4 +2731,34 @@ If the Fleet instance is provided required parameters to complete setup.
 
 ```
 
+## Scripts
+
+### Batch-apply scripts 
+
+_Available in Fleet Premium_
+
+`POST /api/v1/fleet/scripts/batch`
+
+#### Parameters
+
+| Name      | Type   | In    | Description                                                                                                                                                           |
+| --------- | ------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| team_id | number | query | The ID of the team to add the scripts to. Only one team identifier (`team_id` or `team_name`) can be included in the request, omit this parameter if using `team_name`.
+| team_name | string | query | The name of the team to add the scripts to. Only one team identifier (`team_id` or `team_name`) can be included in the request, omit this parameter if using `team_id`.
+| dry_run   | bool   | query | Validate the provided scripts and return any validation errors, but do not apply the changes.                                                                         |
+| scripts   | array  | body  | An array of objects with the scripts payloads. Each item must contain `name` with the script name and `script_contents` with the script contents encoded in base64    |
+
+If both `team_id` and `team_name` parameters are included, this endpoint will respond with an error. If no `team_name` or `team_id` is provided, the scripts will be applied for **all hosts**.
+
+> Note that this endpoint replaces all the active scripts for the specified team (or no team). Any existing script that is not included in the list will be removed, and existing scripts with the same name as a new script will be edited. Providing an empty list of scripts will remove existing scripts.
+
+#### Example
+
+`POST /api/v1/fleet/mdm/scripts/batch`
+
+##### Default response
+
+`204`
+
 <meta name="pageOrderInSection" value="800">
+<meta name="description" value="Read about Fleet API routes that are helpful when developing or contributing to Fleet.">

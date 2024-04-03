@@ -25,6 +25,7 @@ variable "rds_config" {
     master_username                 = optional(string, "fleet")
     snapshot_identifier             = optional(string)
     cluster_tags                    = optional(map(string), {})
+    preferred_maintenance_window    = optional(string, "thu:23:00-fri:00:00")
   })
   default = {
     name                            = "fleet"
@@ -43,6 +44,7 @@ variable "rds_config" {
     master_username                 = "fleet"
     snapshot_identifier             = null
     cluster_tags                    = {}
+    preferred_maintenance_window    = "thu:23:00-fri:00:00"
   }
   description = "The config for the terraform-aws-modules/rds-aurora/aws module"
   nullable    = false
@@ -52,10 +54,11 @@ variable "redis_config" {
   type = object({
     name                          = optional(string, "fleet")
     replication_group_id          = optional(string)
-    elasticache_subnet_group_name = optional(string)
+    elasticache_subnet_group_name = optional(string, "")
     allowed_security_group_ids    = optional(list(string), [])
     subnets                       = list(string)
-    availability_zones            = list(string)
+    allowed_cidrs                 = list(string)
+    availability_zones            = optional(list(string), [])
     cluster_size                  = optional(number, 3)
     instance_type                 = optional(string, "cache.m5.large")
     apply_immediately             = optional(bool, true)
@@ -74,10 +77,11 @@ variable "redis_config" {
   default = {
     name                          = "fleet"
     replication_group_id          = null
-    elasticache_subnet_group_name = null
+    elasticache_subnet_group_name = ""
     allowed_security_group_ids    = []
     subnets                       = null
-    availability_zones            = null
+    allowed_cidrs                 = null
+    availability_zones            = []
     cluster_size                  = 3
     instance_type                 = "cache.m5.large"
     apply_immediately             = true
@@ -94,14 +98,35 @@ variable "redis_config" {
 
 variable "ecs_cluster" {
   type = object({
-    autoscaling_capacity_providers        = any
-    cluster_configuration                 = any
-    cluster_name                          = string
-    cluster_settings                      = map(string)
-    create                                = bool
-    default_capacity_provider_use_fargate = bool
-    fargate_capacity_providers            = any
-    tags                                  = map(string)
+    autoscaling_capacity_providers = optional(any, {})
+    cluster_configuration = optional(any, {
+      execute_command_configuration = {
+        logging = "OVERRIDE"
+        log_configuration = {
+          cloud_watch_log_group_name = "/aws/ecs/aws-ec2"
+        }
+      }
+    })
+    cluster_name = optional(string, "fleet")
+    cluster_settings = optional(map(string), {
+      "name" : "containerInsights",
+      "value" : "enabled",
+    })
+    create                                = optional(bool, true)
+    default_capacity_provider_use_fargate = optional(bool, true)
+    fargate_capacity_providers = optional(any, {
+      FARGATE = {
+        default_capacity_provider_strategy = {
+          weight = 100
+        }
+      }
+      FARGATE_SPOT = {
+        default_capacity_provider_strategy = {
+          weight = 0
+        }
+      }
+    })
+    tags = optional(map(string))
   })
   default = {
     autoscaling_capacity_providers = {}
@@ -142,9 +167,12 @@ variable "fleet_config" {
   type = object({
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
-    image                        = optional(string, "fleetdm/fleet:v4.31.1")
+    image                        = optional(string, "fleetdm/fleet:v4.48.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
+    depends_on                   = optional(list(any), [])
+    mount_points                 = optional(list(any), [])
+    volumes                      = optional(list(any), [])
     extra_environment_variables  = optional(map(string), {})
     extra_iam_policies           = optional(list(string), [])
     extra_execution_iam_policies = optional(list(string), [])
@@ -157,16 +185,25 @@ variable "fleet_config" {
       }), {
       name = "fleet"
     })
-    database = object({
+    database = optional(object({
       password_secret_arn = string
       user                = string
       database            = string
       address             = string
       rr_address          = optional(string, null)
+      }), {
+      password_secret_arn = null
+      user                = null
+      database            = null
+      address             = null
+      rr_address          = null
     })
-    redis = object({
+    redis = optional(object({
       address = string
       use_tls = optional(bool, true)
+      }), {
+      address = null
+      use_tls = true
     })
     awslogs = optional(object({
       name      = optional(string, null)
@@ -180,12 +217,18 @@ variable "fleet_config" {
       prefix    = "fleet"
       retention = 5
     })
-    loadbalancer = object({
+    loadbalancer = optional(object({
       arn = string
+      }), {
+      arn = null
     })
-    networking = object({
+    extra_load_balancers = optional(list(any), [])
+    networking = optional(object({
       subnets         = list(string)
       security_groups = optional(list(string), null)
+      }), {
+      subnets         = null
+      security_groups = null
     })
     autoscaling = optional(object({
       max_capacity                 = optional(number, 5)
@@ -223,6 +266,9 @@ variable "fleet_config" {
     image                        = "fleetdm/fleet:v4.31.1"
     family                       = "fleet"
     sidecars                     = []
+    depends_on                   = []
+    volumes                      = []
+    mount_points                 = []
     extra_environment_variables  = {}
     extra_iam_policies           = []
     extra_execution_iam_policies = []
@@ -254,6 +300,7 @@ variable "fleet_config" {
     loadbalancer = {
       arn = null
     }
+    extra_load_balancers = []
     networking = {
       subnets         = null
       security_groups = null
@@ -294,11 +341,18 @@ variable "migration_config" {
 
 variable "alb_config" {
   type = object({
-    name            = optional(string, "fleet")
-    subnets         = list(string)
-    security_groups = optional(list(string), [])
-    access_logs     = optional(map(string), {})
-    certificate_arn = string
-    allowed_cidrs   = optional(list(string), ["0.0.0.0/0"])
+    name                 = optional(string, "fleet")
+    subnets              = list(string)
+    security_groups      = optional(list(string), [])
+    access_logs          = optional(map(string), {})
+    certificate_arn      = string
+    allowed_cidrs        = optional(list(string), ["0.0.0.0/0"])
+    allowed_ipv6_cidrs   = optional(list(string), ["::/0"])
+    egress_cidrs         = optional(list(string), ["0.0.0.0/0"])
+    egress_ipv6_cidrs    = optional(list(string), ["::/0"])
+    extra_target_groups  = optional(any, [])
+    https_listener_rules = optional(any, [])
+    tls_policy           = optional(string, "ELBSecurityPolicy-TLS-1-2-2017-01")
+    idle_timeout         = optional(number, 60)
   })
 }

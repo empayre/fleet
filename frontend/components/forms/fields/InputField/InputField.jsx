@@ -3,7 +3,11 @@ import PropTypes from "prop-types";
 import classnames from "classnames";
 import { noop, pick } from "lodash";
 
+import { stringToClipboard } from "utilities/copy_text";
+
 import FormField from "components/forms/FormField";
+import Button from "components/buttons/Button";
+import Icon from "components/Icon";
 
 const baseClass = "input-field";
 
@@ -29,11 +33,14 @@ class InputField extends Component {
     ]).isRequired,
     parseTarget: PropTypes.bool,
     tooltip: PropTypes.string,
-    hint: PropTypes.oneOfType([
+    labelTooltipPosition: PropTypes.string,
+    helpText: PropTypes.oneOfType([
       PropTypes.string,
       PropTypes.arrayOf(PropTypes.string),
       PropTypes.object,
     ]),
+    enableCopy: PropTypes.bool,
+    ignore1password: PropTypes.bool,
   };
 
   static defaultProps = {
@@ -49,8 +56,18 @@ class InputField extends Component {
     value: "",
     parseTarget: false,
     tooltip: "",
-    hint: "",
+    labelTooltipPosition: "",
+    helpText: "",
+    enableCopy: false,
+    ignore1password: false,
   };
+
+  constructor() {
+    super();
+    this.state = {
+      copied: false,
+    };
+  }
 
   componentDidMount() {
     const { autofocus } = this.props;
@@ -91,6 +108,7 @@ class InputField extends Component {
       type,
       blockAutoComplete,
       value,
+      ignore1password,
     } = this.props;
 
     const { onInputChange } = this;
@@ -103,12 +121,23 @@ class InputField extends Component {
     });
 
     const formFieldProps = pick(this.props, [
-      "hint",
+      "helpText",
       "label",
       "error",
       "name",
       "tooltip",
+      "labelTooltipPosition",
     ]);
+
+    const copyValue = (e) => {
+      e.preventDefault();
+      stringToClipboard(value).then(() => {
+        this.setState({ copied: true });
+        setTimeout(() => {
+          this.setState({ copied: false });
+        }, 2000);
+      });
+    };
 
     if (type === "textarea") {
       return (
@@ -135,25 +164,48 @@ class InputField extends Component {
       );
     }
 
+    const inputContainerClasses = classnames(`${baseClass}__input-container`, {
+      "copy-enabled": this.props.enableCopy,
+    });
+
     return (
       <FormField {...formFieldProps} type="input" className={inputWrapperClass}>
-        <input
-          disabled={disabled}
-          name={name}
-          id={name}
-          onChange={onInputChange}
-          onFocus={onFocus}
-          onBlur={onBlur}
-          className={inputClasses}
-          placeholder={placeholder}
-          ref={(r) => {
-            this.input = r;
-          }}
-          type={type}
-          {...inputOptions}
-          value={value}
-          autoComplete={blockAutoComplete ? "new-password" : ""}
-        />
+        <div className={inputContainerClasses}>
+          <input
+            disabled={disabled}
+            name={name}
+            id={name}
+            onChange={onInputChange}
+            onFocus={onFocus}
+            onBlur={onBlur}
+            className={inputClasses}
+            placeholder={placeholder}
+            ref={(r) => {
+              this.input = r;
+            }}
+            type={type}
+            {...inputOptions}
+            value={value}
+            autoComplete={blockAutoComplete ? "new-password" : ""}
+            data-1p-ignore={ignore1password}
+          />
+          {this.props.enableCopy && (
+            <div className={`${baseClass}__copy-wrapper`}>
+              <Button
+                variant="text-icon"
+                onClick={copyValue}
+                className={`${baseClass}__copy-value-button`}
+              >
+                <Icon name="copy" /> Copy
+              </Button>
+              {this.state.copied && (
+                <span className={`${baseClass}__copied-confirmation`}>
+                  Copied!
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       </FormField>
     );
   }

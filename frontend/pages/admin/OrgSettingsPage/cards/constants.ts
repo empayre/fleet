@@ -22,6 +22,8 @@ export interface IAppConfigFormErrors {
   server_url?: string | null;
   org_name?: string | null;
   org_logo_url?: string | null;
+  org_logo_url_light_background?: string | null;
+  org_support_url?: string | null;
   idp_image_url?: string | null;
   sender_address?: string | null;
   server?: string | null;
@@ -47,34 +49,7 @@ export const authTypeOptions = [
   { label: "None", value: "authtype_none" },
 ];
 
-export const percentageOfHosts = [
-  { label: "1%", value: 1 },
-  { label: "5%", value: 5 },
-  { label: "10%", value: 10 },
-  { label: "25%", value: 25 },
-];
-
-export const numberOfDays = [
-  { label: "1 day", value: 1 },
-  { label: "3 days", value: 3 },
-  { label: "7 days", value: 7 },
-  { label: "14 days", value: 14 },
-];
-
-export const hostStatusPreview = {
-  text:
-    "More than X% of your hosts have not checked into Fleet for more than Y days. You’ve been sent this message because the Host status webhook is enabled in your Fleet instance.",
-  data: {
-    unseen_hosts: 1,
-    total_hosts: 2,
-    days_unseen: 3,
-  },
-};
-
 export default {
   authMethodOptions,
   authTypeOptions,
-  percentageOfHosts,
-  numberOfDays,
-  hostStatusPreview,
 };

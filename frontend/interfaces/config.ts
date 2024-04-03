@@ -1,93 +1,10 @@
 /* Config interface is a flattened version of the fleet/config API response */
-
 import {
   IWebhookHostStatus,
   IWebhookFailingPolicies,
   IWebhookSoftwareVulnerabilities,
 } from "interfaces/webhook";
-import PropTypes from "prop-types";
-import { IIntegrations } from "./integration";
-
-export default PropTypes.shape({
-  org_name: PropTypes.string,
-  org_logo_url: PropTypes.string,
-  contact_url: PropTypes.string,
-  server_url: PropTypes.string,
-  live_query_disabled: PropTypes.bool,
-  enable_analytics: PropTypes.bool,
-  enable_smtp: PropTypes.bool,
-  configured: PropTypes.bool,
-  sender_address: PropTypes.string,
-  server: PropTypes.string,
-  port: PropTypes.number,
-  authentication_type: PropTypes.string,
-  user_name: PropTypes.string,
-  password: PropTypes.string,
-  enable_ssl_tls: PropTypes.bool,
-  authentication_method: PropTypes.string,
-  domain: PropTypes.string,
-  verify_sll_certs: PropTypes.bool,
-  enable_start_tls: PropTypes.bool,
-  entity_id: PropTypes.string,
-  idp_image_url: PropTypes.string,
-  metadata: PropTypes.string,
-  metadata_url: PropTypes.string,
-  idp_name: PropTypes.string,
-  enable_sso: PropTypes.bool,
-  enable_sso_idp_login: PropTypes.bool,
-  enable_jit_provisioning: PropTypes.bool,
-  host_expiry_enabled: PropTypes.bool,
-  host_expiry_window: PropTypes.number,
-  agent_options: PropTypes.string,
-  tier: PropTypes.string,
-  organization: PropTypes.string,
-  device_count: PropTypes.number,
-  expiration: PropTypes.string,
-  mdm: PropTypes.shape({
-    enabled_and_configured: PropTypes.bool,
-    apple_bm_terms_expired: PropTypes.bool,
-    apple_bm_enabled_and_configured: PropTypes.bool,
-    macos_updates: PropTypes.shape({
-      minimum_version: PropTypes.string,
-      deadline: PropTypes.string,
-    }),
-  }),
-  note: PropTypes.string,
-  // vulnerability_settings: PropTypes.any, TODO
-  enable_host_status_webhook: PropTypes.bool,
-  destination_url: PropTypes.string,
-  host_percentage: PropTypes.number,
-  days_count: PropTypes.number,
-  logging: PropTypes.shape({
-    debug: PropTypes.bool,
-    json: PropTypes.bool,
-    result: PropTypes.shape({
-      plugin: PropTypes.string,
-      config: PropTypes.shape({
-        status_log_file: PropTypes.string,
-        result_log_file: PropTypes.string,
-        enable_log_rotation: PropTypes.bool,
-        enable_log_compression: PropTypes.bool,
-      }),
-    }),
-    status: PropTypes.shape({
-      plugin: PropTypes.string,
-      config: PropTypes.shape({
-        status_log_file: PropTypes.string,
-        result_log_file: PropTypes.string,
-        enable_log_rotation: PropTypes.bool,
-        enable_log_compression: PropTypes.bool,
-      }),
-    }),
-  }),
-  email: PropTypes.shape({
-    backend: PropTypes.string,
-    config: PropTypes.shape({
-      region: PropTypes.string,
-      source_arn: PropTypes.string,
-    }),
-  }),
-});
+import { IGlobalIntegrations } from "./integration";
 
 export interface ILicense {
   tier: string;
@@ -112,14 +29,16 @@ export interface IMacOsMigrationSettings {
 }
 
 export interface IMdmConfig {
+  enable_disk_encryption: boolean;
   enabled_and_configured: boolean;
   apple_bm_default_team?: string;
   apple_bm_terms_expired: boolean;
   apple_bm_enabled_and_configured: boolean;
+  windows_enabled_and_configured: boolean;
   end_user_authentication: IEndUserAuthentication;
   macos_updates: {
-    minimum_version: string;
-    deadline: string;
+    minimum_version: string | null;
+    deadline: string | null;
   };
   macos_settings: {
     custom_settings: null;
@@ -129,8 +48,13 @@ export interface IMdmConfig {
     bootstrap_package: string | null;
     enable_end_user_authentication: boolean;
     macos_setup_assistant: string | null;
+    enable_release_device_manually: boolean | null;
   };
   macos_migration: IMacOsMigrationSettings;
+  windows_updates: {
+    deadline_days: number | null;
+    grace_period_days: number | null;
+  };
 }
 
 export interface IDeviceGlobalConfig {
@@ -181,20 +105,25 @@ export interface IConfigFeatures {
   enable_software_inventory: boolean;
 }
 
+export interface IConfigServerSettings {
+  server_url: string;
+  live_query_disabled: boolean;
+  enable_analytics: boolean;
+  deferred_save_host: boolean;
+  query_reports_disabled: boolean;
+  scripts_disabled: boolean;
+}
+
 export interface IConfig {
   org_info: {
     org_name: string;
     org_logo_url: string;
+    org_logo_url_light_background: string;
     contact_url: string;
   };
   sandbox_enabled: boolean;
-  server_settings: {
-    server_url: string;
-    live_query_disabled: boolean;
-    enable_analytics: boolean;
-    deferred_save_host: boolean;
-  };
-  smtp_settings: {
+  server_settings: IConfigServerSettings;
+  smtp_settings?: {
     enable_smtp: boolean;
     configured: boolean;
     sender_address: string;
@@ -247,7 +176,7 @@ export interface IConfig {
   //   databases_path: string;
   // };
   webhook_settings: IWebhookSettings;
-  integrations: IIntegrations;
+  integrations: IGlobalIntegrations;
   logging: {
     debug: boolean;
     json: boolean;
@@ -286,7 +215,7 @@ export interface IConfig {
 
 export interface IWebhookSettings {
   failing_policies_webhook: IWebhookFailingPolicies;
-  host_status_webhook: IWebhookHostStatus;
+  host_status_webhook: IWebhookHostStatus | null;
   vulnerabilities_webhook: IWebhookSoftwareVulnerabilities;
 }
 

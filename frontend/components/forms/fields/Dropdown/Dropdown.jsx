@@ -6,6 +6,7 @@ import Select from "react-select";
 
 import dropdownOptionInterface from "interfaces/dropdownOption";
 import FormField from "components/forms/FormField";
+import Icon from "components/Icon";
 
 const baseClass = "dropdown";
 
@@ -34,6 +35,13 @@ class Dropdown extends Component {
     parseTarget: PropTypes.bool,
     tooltip: PropTypes.string,
     autoFocus: PropTypes.bool,
+    /** Includes styled filter icon */
+    tableFilterDropdown: PropTypes.bool,
+    helpText: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.arrayOf(PropTypes.string),
+      PropTypes.object,
+    ]),
   };
 
   static defaultProps = {
@@ -49,6 +57,7 @@ class Dropdown extends Component {
     parseTarget: false,
     tooltip: "",
     autoFocus: false,
+    tableFilterDropdown: false,
   };
 
   onMenuOpen = () => {
@@ -110,8 +119,38 @@ class Dropdown extends Component {
     );
   };
 
+  renderCustomDropdownArrow = () => {
+    return (
+      <div className={`${baseClass}__custom-arrow`}>
+        <Icon name="chevron-down" className={`${baseClass}__icon`} />
+      </div>
+    );
+  };
+
+  // Adds styled filter icon to dropdown
+  renderCustomTableFilter = () => {
+    const { options, value } = this.props;
+    const customLabel = options
+      .filter((option) => option.value === value)
+      .map((option) => option.label);
+
+    return (
+      <div className={`${baseClass}__custom-value`}>
+        <Icon name="filter" className={`${baseClass}__icon`} />
+        <div className={`${baseClass}__custom-value-label`}>{customLabel}</div>
+      </div>
+    );
+  };
+
   render() {
-    const { handleChange, renderOption, onMenuOpen, onMenuClose } = this;
+    const {
+      handleChange,
+      renderOption,
+      onMenuOpen,
+      onMenuClose,
+      renderCustomDropdownArrow,
+      renderCustomTableFilter,
+    } = this;
     const {
       error,
       className,
@@ -125,10 +164,11 @@ class Dropdown extends Component {
       wrapperClassName,
       searchable,
       autoFocus,
+      tableFilterDropdown,
     } = this.props;
 
     const formFieldProps = pick(this.props, [
-      "hint",
+      "helpText",
       "label",
       "error",
       "name",
@@ -159,6 +199,10 @@ class Dropdown extends Component {
           onOpen={onMenuOpen}
           onClose={onMenuClose}
           autoFocus={autoFocus}
+          arrowRenderer={renderCustomDropdownArrow}
+          valueComponent={
+            tableFilterDropdown ? renderCustomTableFilter : undefined
+          }
         />
       </FormField>
     );

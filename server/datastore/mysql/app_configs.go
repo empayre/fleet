@@ -25,7 +25,7 @@ func (ds *Datastore) NewAppConfig(ctx context.Context, info *fleet.AppConfig) (*
 }
 
 func (ds *Datastore) AppConfig(ctx context.Context) (*fleet.AppConfig, error) {
-	return appConfigDB(ctx, ds.reader)
+	return appConfigDB(ctx, ds.reader(ctx))
 }
 
 func appConfigDB(ctx context.Context, q sqlx.QueryerContext) (*fleet.AppConfig, error) {
@@ -63,20 +63,13 @@ func (ds *Datastore) SaveAppConfig(ctx context.Context, info *fleet.AppConfig) e
 			return ctxerr.Wrap(ctx, err, "insert app_config_json")
 		}
 
-		if info.SSOSettings != nil && !info.SSOSettings.EnableSSO {
-			_, err = tx.ExecContext(ctx, `UPDATE users SET sso_enabled=false`)
-			if err != nil {
-				return ctxerr.Wrap(ctx, err, "update users sso")
-			}
-		}
-
 		return nil
 	})
 }
 
 func (ds *Datastore) VerifyEnrollSecret(ctx context.Context, secret string) (*fleet.EnrollSecret, error) {
 	var s fleet.EnrollSecret
-	err := sqlx.GetContext(ctx, ds.reader, &s, "SELECT team_id FROM enroll_secrets WHERE secret = ?", secret)
+	err := sqlx.GetContext(ctx, ds.reader(ctx), &s, "SELECT team_id FROM enroll_secrets WHERE secret = ?", secret)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ctxerr.Wrap(ctx, notFound("EnrollSecret"), "no matching secret found")
@@ -123,6 +116,7 @@ func applyEnrollSecretsDB(ctx context.Context, q sqlx.ExtContext, teamID *uint, 
 	}
 	secretsCreatedAt := make(map[string]*time.Time, len(existingSecrets))
 	for _, es := range existingSecrets {
+		es := es
 		secretsCreatedAt[es.Secret] = &es.CreatedAt
 	}
 
@@ -153,6 +147,10 @@ func applyEnrollSecretsDB(ctx context.Context, q sqlx.ExtContext, teamID *uint, 
 			args = append(args, s.Secret, teamID, secretCreatedAt)
 		}
 		if _, err := q.ExecContext(ctx, sql, args...); err != nil {
+			if isDuplicate(err) {
+				// Obfuscate the secret in the error message
+				err = alreadyExists("secret", fleet.MaskedPassword)
+			}
 			return ctxerr.Wrap(ctx, err, "insert secrets")
 		}
 	}
@@ -160,7 +158,7 @@ func applyEnrollSecretsDB(ctx context.Context, q sqlx.ExtContext, teamID *uint, 
 }
 
 func (ds *Datastore) GetEnrollSecrets(ctx context.Context, teamID *uint) ([]*fleet.EnrollSecret, error) {
-	return getEnrollSecretsDB(ctx, ds.reader, teamID)
+	return getEnrollSecretsDB(ctx, ds.reader(ctx), teamID)
 }
 
 func getEnrollSecretsDB(ctx context.Context, q sqlx.QueryerContext, teamID *uint) ([]*fleet.EnrollSecret, error) {
@@ -207,8 +205,23 @@ func (ds *Datastore) AggregateEnrollSecretPerTeam(ctx context.Context) ([]*fleet
                 created_at DESC LIMIT 1)
 	`
 	var secrets []*fleet.EnrollSecret
-	if err := sqlx.SelectContext(ctx, ds.reader, &secrets, query); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &secrets, query); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "get secrets")
 	}
 	return secrets, nil
+}
+
+func (ds *Datastore) getConfigEnableDiskEncryption(ctx context.Context, teamID *uint) (bool, error) {
+	if teamID != nil && *teamID > 0 {
+		tc, err := ds.TeamMDMConfig(ctx, *teamID)
+		if err != nil {
+			return false, err
+		}
+		return tc.EnableDiskEncryption, nil
+	}
+	ac, err := ds.AppConfig(ctx)
+	if err != nil {
+		return false, err
+	}
+	return ac.MDM.EnableDiskEncryption.Value, nil
 }

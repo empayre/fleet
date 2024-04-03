@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -13,50 +14,9 @@ import (
 	_ "github.com/doug-martin/goqu/v9/dialect/mysql"
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
 	"github.com/fleetdm/fleet/v4/server/fleet"
+	"github.com/go-kit/kit/log/level"
 	"github.com/jmoiron/sqlx"
 )
-
-const (
-	maxSoftwareNameLen             = 255
-	maxSoftwareVersionLen          = 255
-	maxSoftwareSourceLen           = 64
-	maxSoftwareBundleIdentifierLen = 255
-
-	maxSoftwareReleaseLen = 64
-	maxSoftwareVendorLen  = 32
-	maxSoftwareArchLen    = 16
-)
-
-func truncateString(str string, length int) string {
-	if len(str) > length {
-		return str[:length]
-	}
-	return str
-}
-
-func uniqueStringToSoftware(s string) fleet.Software {
-	parts := strings.Split(s, fleet.SoftwareFieldSeparator)
-
-	// Release, Vendor and Arch fields were added on a migration,
-	// If one of them is defined, then they are included in the string.
-	var release, vendor, arch string
-	if len(parts) > 4 {
-		release = truncateString(parts[4], maxSoftwareReleaseLen)
-		vendor = truncateString(parts[5], maxSoftwareVendorLen)
-		arch = truncateString(parts[6], maxSoftwareArchLen)
-	}
-
-	return fleet.Software{
-		Name:             truncateString(parts[0], maxSoftwareNameLen),
-		Version:          truncateString(parts[1], maxSoftwareVersionLen),
-		Source:           truncateString(parts[2], maxSoftwareSourceLen),
-		BundleIdentifier: truncateString(parts[3], maxSoftwareBundleIdentifierLen),
-
-		Release: release,
-		Vendor:  vendor,
-		Arch:    arch,
-	}
-}
 
 func softwareSliceToMap(softwares []fleet.Software) map[string]fleet.Software {
 	result := make(map[string]fleet.Software)
@@ -73,6 +33,39 @@ func (ds *Datastore) UpdateHostSoftware(ctx context.Context, hostID uint, softwa
 		result = r
 		return err
 	})
+	if err != nil {
+		return result, err
+	}
+
+	// We perform the following cleanup on a separate transaction to avoid deadlocks.
+	//
+	// Cleanup the software table when no more hosts have the deleted host_software
+	// table entries. Otherwise the software will be listed by ds.ListSoftware but
+	// ds.SoftwareByID, ds.CountHosts and ds.ListHosts will return a *notFoundError
+	// error for such software.
+	if len(result.Deleted) > 0 {
+		deletesHostSoftwareIDs := make([]uint, 0, len(result.Deleted))
+		for _, software := range result.Deleted {
+			deletesHostSoftwareIDs = append(deletesHostSoftwareIDs, software.ID)
+		}
+		slices.Sort(deletesHostSoftwareIDs)
+		if err := ds.withRetryTxx(ctx, func(tx sqlx.ExtContext) error {
+			stmt := `DELETE FROM software WHERE id IN (?) AND NOT EXISTS (
+				SELECT 1 FROM host_software hsw WHERE hsw.software_id = software.id
+			)`
+			stmt, args, err := sqlx.In(stmt, deletesHostSoftwareIDs)
+			if err != nil {
+				return ctxerr.Wrap(ctx, err, "build delete software query")
+			}
+			if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
+				return ctxerr.Wrap(ctx, err, "delete software")
+			}
+			return nil
+		}); err != nil {
+			return result, err
+		}
+	}
+
 	return result, err
 }
 
@@ -127,7 +120,7 @@ func (ds *Datastore) getHostSoftwareInstalledPaths(
 	`
 
 	var result []fleet.HostSoftwareInstalledPath
-	if err := sqlx.SelectContext(ctx, ds.reader, &result, stmt, hostID); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &result, stmt, hostID); err != nil {
 		return nil, err
 	}
 
@@ -303,7 +296,7 @@ func nothingChanged(current, incoming []fleet.Software, minLastOpenedAtDiff time
 }
 
 func (ds *Datastore) ListSoftwareByHostIDShort(ctx context.Context, hostID uint) ([]fleet.Software, error) {
-	return listSoftwareByHostIDShort(ctx, ds.reader, hostID)
+	return listSoftwareByHostIDShort(ctx, ds.reader(ctx), hostID)
 }
 
 func listSoftwareByHostIDShort(
@@ -317,10 +310,12 @@ SELECT
     s.name,
     s.version,
     s.source,
+    s.browser,
     s.bundle_identifier,
     s.release,
     s.vendor,
     s.arch,
+    s.extension_id,
     hs.last_opened_at
 FROM
     software s
@@ -415,23 +410,6 @@ func deleteUninstalledHostSoftwareDB(
 		return nil, ctxerr.Wrap(ctx, err, "delete host software")
 	}
 
-	// Cleanup the software table when no more hosts have the deleted host_software
-	// table entries.
-	// Otherwise the software will be listed by ds.ListSoftware but ds.SoftwareByID,
-	// ds.CountHosts and ds.ListHosts will return a *notFoundError error for such
-	// software.
-	stmt = `DELETE FROM software WHERE id IN (?) AND 
-	NOT EXISTS (
-		SELECT 1 FROM host_software hsw WHERE hsw.software_id = software.id
-	)`
-	stmt, args, err = sqlx.In(stmt, deletesHostSoftwareIDs)
-	if err != nil {
-		return nil, ctxerr.Wrap(ctx, err, "build delete software query")
-	}
-	if _, err := tx.ExecContext(ctx, stmt, args...); err != nil {
-		return nil, ctxerr.Wrap(ctx, err, "delete software")
-	}
-
 	return deletedSoftware, nil
 }
 
@@ -441,8 +419,8 @@ func getOrGenerateSoftwareIdDB(ctx context.Context, tx sqlx.ExtContext, s fleet.
 		if err := sqlx.GetContext(ctx, tx, &existingID,
 			"SELECT id FROM software "+
 				"WHERE name = ? AND version = ? AND source = ? AND `release` = ? AND "+
-				"vendor = ? AND arch = ? AND bundle_identifier = ? LIMIT 1",
-			s.Name, s.Version, s.Source, s.Release, s.Vendor, s.Arch, s.BundleIdentifier,
+				"vendor = ? AND arch = ? AND bundle_identifier = ? AND extension_id = ? AND browser = ? LIMIT 1",
+			s.Name, s.Version, s.Source, s.Release, s.Vendor, s.Arch, s.BundleIdentifier, s.ExtensionID, s.Browser,
 		); err != nil {
 			return 0, err
 		}
@@ -459,14 +437,18 @@ func getOrGenerateSoftwareIdDB(ctx context.Context, tx sqlx.ExtContext, s fleet.
 	}
 
 	_, err := tx.ExecContext(ctx,
-		"INSERT INTO software "+
-			"(name, version, source, `release`, vendor, arch, bundle_identifier) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE bundle_identifier=VALUES(bundle_identifier)",
-		s.Name, s.Version, s.Source, s.Release, s.Vendor, s.Arch, s.BundleIdentifier,
+		fmt.Sprintf("INSERT INTO software "+
+			"(name, version, source, `release`, vendor, arch, bundle_identifier, extension_id, browser, checksum) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, %s)", softwareChecksumComputedColumn("")),
+		s.Name, s.Version, s.Source, s.Release, s.Vendor, s.Arch, s.BundleIdentifier, s.ExtensionID, s.Browser,
 	)
 	if err != nil {
-		return 0, ctxerr.Wrap(ctx, err, "insert software")
+		if !isDuplicate(err) {
+			return 0, ctxerr.Wrap(ctx, err, "insert software")
+		}
+		// if the error is a duplicate software entry, there was a race and another
+		// process inserted that software, so continue and try to get its id as it
+		// now exists.
 	}
 
 	// LastInsertId sometimes returns 0 as it's dependent on connections and how mysql is
@@ -481,6 +463,29 @@ func getOrGenerateSoftwareIdDB(ctx context.Context, tx sqlx.ExtContext, s fleet.
 	}
 }
 
+func softwareChecksumComputedColumn(tableAlias string) string {
+	if tableAlias != "" && !strings.HasSuffix(tableAlias, ".") {
+		tableAlias += "."
+	}
+
+	// concatenate with separator \x00
+	return fmt.Sprintf(` UNHEX(
+		MD5(
+			CONCAT_WS(CHAR(0),
+				%sname,
+				%[1]sversion,
+				%[1]ssource,
+				COALESCE(%[1]sbundle_identifier, ''),
+				`+"%[1]s`release`"+`,
+				%[1]sarch,
+				%[1]svendor,
+				%[1]sbrowser,
+				%[1]sextension_id
+			)
+		)
+	) `, tableAlias)
+}
+
 // insert host_software that is in incoming map, but not in current map.
 // returns the inserted software on the host
 func insertNewInstalledHostSoftwareDB(
@@ -493,24 +498,31 @@ func insertNewInstalledHostSoftwareDB(
 	var insertsHostSoftware []interface{}
 	var insertedSoftware []fleet.Software
 
-	incomingOrdered := make([]string, 0, len(incomingMap))
-	for s := range incomingMap {
-		incomingOrdered = append(incomingOrdered, s)
+	type softwareWithUniqueName struct {
+		uniqueName string
+		software   fleet.Software
 	}
-	sort.Strings(incomingOrdered)
+	incomingOrdered := make([]softwareWithUniqueName, 0, len(incomingMap))
+	for uniqueName, software := range incomingMap {
+		incomingOrdered = append(incomingOrdered, softwareWithUniqueName{
+			uniqueName: uniqueName,
+			software:   software,
+		})
+	}
+	sort.Slice(incomingOrdered, func(i, j int) bool {
+		return incomingOrdered[i].uniqueName < incomingOrdered[j].uniqueName
+	})
 
 	for _, s := range incomingOrdered {
-		if _, ok := currentMap[s]; !ok {
-			swToInsert := uniqueStringToSoftware(s)
-			id, err := getOrGenerateSoftwareIdDB(ctx, tx, swToInsert)
+		if _, ok := currentMap[s.uniqueName]; !ok {
+			id, err := getOrGenerateSoftwareIdDB(ctx, tx, s.software)
 			if err != nil {
 				return nil, err
 			}
-			sw := incomingMap[s]
-			insertsHostSoftware = append(insertsHostSoftware, hostID, id, sw.LastOpenedAt)
+			insertsHostSoftware = append(insertsHostSoftware, hostID, id, s.software.LastOpenedAt)
 
-			swToInsert.ID = id
-			insertedSoftware = append(insertedSoftware, swToInsert)
+			s.software.ID = id
+			insertedSoftware = append(insertedSoftware, s.software)
 		}
 	}
 
@@ -622,6 +634,8 @@ func listSoftwareDB(
 				cve.EPSSProbability = &result.EPSSProbability
 				cve.CISAKnownExploit = &result.CISAKnownExploit
 				cve.CVEPublished = &result.CVEPublished
+				cve.Description = &result.Description
+				cve.ResolvedInVersion = &result.ResolvedInVersion
 			}
 			softwares[idx].Vulnerabilities = append(softwares[idx].Vulnerabilities, cve)
 		}
@@ -631,13 +645,33 @@ func listSoftwareDB(
 }
 
 // softwareCVE is used for left joins with cve
+//
+//
+
 type softwareCVE struct {
 	fleet.Software
-	CVE              *string    `db:"cve"`
-	CVSSScore        *float64   `db:"cvss_score"`
-	EPSSProbability  *float64   `db:"epss_probability"`
-	CISAKnownExploit *bool      `db:"cisa_known_exploit"`
-	CVEPublished     *time.Time `db:"cve_published"`
+
+	// CVE is the CVE identifier pulled from the NVD json (e.g. CVE-2019-1234)
+	CVE *string `db:"cve"`
+
+	// CVSSScore is the CVSS score pulled from the NVD json (premium only)
+	CVSSScore *float64 `db:"cvss_score"`
+
+	// EPSSProbability is the EPSS probability pulled from FIRST (premium only)
+	EPSSProbability *float64 `db:"epss_probability"`
+
+	// CISAKnownExploit is the CISAKnownExploit pulled from CISA (premium only)
+	CISAKnownExploit *bool `db:"cisa_known_exploit"`
+
+	// CVEPublished is the CVE published date pulled from the NVD json (premium only)
+	CVEPublished *time.Time `db:"cve_published"`
+
+	// Description is the CVE description field pulled from the NVD json
+	Description *string `db:"description"`
+
+	// ResolvedInVersion is the version of software where the CVE is no longer applicable.
+	// This is pulled from the versionEndExcluding field in the NVD json
+	ResolvedInVersion *string `db:"resolved_in_version"`
 }
 
 func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, error) {
@@ -649,6 +683,8 @@ func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, e
 			"s.version",
 			"s.source",
 			"s.bundle_identifier",
+			"s.extension_id",
+			"s.browser",
 			"s.release",
 			"s.vendor",
 			"s.arch",
@@ -727,14 +763,16 @@ func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, e
 				goqu.On(goqu.I("c.cve").Eq(goqu.I("scv.cve"))),
 			).
 			SelectAppend(
-				goqu.MAX("c.cvss_score").As("cvss_score"),                 // for ordering
-				goqu.MAX("c.epss_probability").As("epss_probability"),     // for ordering
-				goqu.MAX("c.cisa_known_exploit").As("cisa_known_exploit"), // for ordering
-				goqu.MAX("c.published").As("cve_published"),               // for ordering
+				goqu.MAX("c.cvss_score").As("cvss_score"),                     // for ordering
+				goqu.MAX("c.epss_probability").As("epss_probability"),         // for ordering
+				goqu.MAX("c.cisa_known_exploit").As("cisa_known_exploit"),     // for ordering
+				goqu.MAX("c.published").As("cve_published"),                   // for ordering
+				goqu.MAX("c.description").As("description"),                   // for ordering
+				goqu.MAX("scv.resolved_in_version").As("resolved_in_version"), // for ordering
 			)
 	}
 
-	if match := opts.MatchQuery; match != "" {
+	if match := opts.ListOptions.MatchQuery; match != "" {
 		match = likePattern(match)
 		ds = ds.Where(
 			goqu.Or(
@@ -759,6 +797,8 @@ func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, e
 		"s.version",
 		"s.source",
 		"s.bundle_identifier",
+		"s.extension_id",
+		"s.browser",
 		"s.release",
 		"s.vendor",
 		"s.arch",
@@ -777,6 +817,8 @@ func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, e
 			"s.version",
 			"s.source",
 			"s.bundle_identifier",
+			"s.extension_id",
+			"s.browser",
 			"s.release",
 			"s.vendor",
 			"s.arch",
@@ -798,7 +840,9 @@ func selectSoftwareSQL(opts fleet.SoftwareListOptions) (string, []interface{}, e
 			"c.cvss_score",
 			"c.epss_probability",
 			"c.cisa_known_exploit",
+			"c.description",
 			goqu.I("c.published").As("cve_published"),
+			"scv.resolved_in_version",
 		)
 	}
 
@@ -826,7 +870,7 @@ func countSoftwareDB(
 	opts fleet.SoftwareListOptions,
 ) (int, error) {
 	opts.ListOptions = fleet.ListOptions{
-		MatchQuery: opts.MatchQuery,
+		MatchQuery: opts.ListOptions.MatchQuery,
 	}
 
 	sql, args, err := selectSoftwareSQL(opts)
@@ -849,7 +893,7 @@ func (ds *Datastore) LoadHostSoftware(ctx context.Context, host *fleet.Host, inc
 		HostID:           &host.ID,
 		IncludeCVEScores: includeCVEScores,
 	}
-	software, err := listSoftwareDB(ctx, ds.reader, opts)
+	software, err := listSoftwareDB(ctx, ds.reader(ctx), opts)
 	if err != nil {
 		return err
 	}
@@ -916,10 +960,10 @@ func (ds *Datastore) AllSoftwareIterator(
 	var err error
 	var args []interface{}
 
-	stmt := `SELECT 
-		s.* ,
+	stmt := `SELECT
+		s.id, s.name, s.version, s.source, s.bundle_identifier, s.release, s.arch, s.vendor, s.browser, s.extension_id, s.title_id ,
 		COALESCE(sc.cpe, '') AS generated_cpe
-	FROM software s 
+	FROM software s
 	LEFT JOIN software_cpe sc ON (s.id=sc.software_id)`
 
 	var conditionals []string
@@ -947,7 +991,7 @@ func (ds *Datastore) AllSoftwareIterator(
 		}
 	}
 
-	rows, err := ds.reader.QueryxContext(ctx, stmt, args...) //nolint:sqlclosecheck
+	rows, err := ds.reader(ctx).QueryxContext(ctx, stmt, args...) //nolint:sqlclosecheck
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "load host software")
 	}
@@ -970,7 +1014,7 @@ func (ds *Datastore) UpsertSoftwareCPEs(ctx context.Context, cpes []fleet.Softwa
 	for _, cpe := range cpes {
 		args = append(args, cpe.SoftwareID, cpe.CPE)
 	}
-	res, err := ds.writer.ExecContext(ctx, sql, args...)
+	res, err := ds.writer(ctx).ExecContext(ctx, sql, args...)
 	if err != nil {
 		return 0, ctxerr.Wrap(ctx, err, "insert software cpes")
 	}
@@ -996,7 +1040,7 @@ func (ds *Datastore) DeleteSoftwareCPEs(ctx context.Context, cpes []fleet.Softwa
 		return 0, ctxerr.Wrap(ctx, err, "error building 'In' query part when deleting software CPEs")
 	}
 
-	res, err := ds.writer.ExecContext(ctx, query, args...)
+	res, err := ds.writer(ctx).ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, ctxerr.Wrapf(ctx, err, "deleting cpes software")
 	}
@@ -1013,7 +1057,7 @@ func (ds *Datastore) ListSoftwareCPEs(ctx context.Context) ([]fleet.SoftwareCPE,
 	var args []interface{}
 
 	stmt := `SELECT id, software_id, cpe FROM software_cpe`
-	err = sqlx.SelectContext(ctx, ds.reader, &result, stmt, args...)
+	err = sqlx.SelectContext(ctx, ds.reader(ctx), &result, stmt, args...)
 
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "loads cpes")
@@ -1021,12 +1065,30 @@ func (ds *Datastore) ListSoftwareCPEs(ctx context.Context) ([]fleet.SoftwareCPE,
 	return result, nil
 }
 
-func (ds *Datastore) ListSoftware(ctx context.Context, opt fleet.SoftwareListOptions) ([]fleet.Software, error) {
-	return listSoftwareDB(ctx, ds.reader, opt)
+func (ds *Datastore) ListSoftware(ctx context.Context, opt fleet.SoftwareListOptions) ([]fleet.Software, *fleet.PaginationMetadata, error) {
+	software, err := listSoftwareDB(ctx, ds.reader(ctx), opt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	perPage := opt.ListOptions.PerPage
+	var metaData *fleet.PaginationMetadata
+	if opt.ListOptions.IncludeMetadata {
+		if perPage <= 0 {
+			perPage = defaultSelectLimit
+		}
+		metaData = &fleet.PaginationMetadata{HasPreviousResults: opt.ListOptions.Page > 0}
+		if len(software) > int(perPage) {
+			metaData.HasNextResults = true
+			software = software[:len(software)-1]
+		}
+	}
+
+	return software, metaData, nil
 }
 
 func (ds *Datastore) CountSoftware(ctx context.Context, opt fleet.SoftwareListOptions) (int, error) {
-	return countSoftwareDB(ctx, ds.reader, opt)
+	return countSoftwareDB(ctx, ds.reader(ctx), opt)
 }
 
 // DeleteSoftwareVulnerabilities deletes the given list of software vulnerabilities
@@ -1043,7 +1105,7 @@ func (ds *Datastore) DeleteSoftwareVulnerabilities(ctx context.Context, vulnerab
 	for _, vulnerability := range vulnerabilities {
 		args = append(args, vulnerability.SoftwareID, vulnerability.CVE)
 	}
-	if _, err := ds.writer.ExecContext(ctx, sql, args...); err != nil {
+	if _, err := ds.writer(ctx).ExecContext(ctx, sql, args...); err != nil {
 		return ctxerr.Wrapf(ctx, err, "deleting vulnerable software")
 	}
 	return nil
@@ -1056,23 +1118,25 @@ func (ds *Datastore) DeleteOutOfDateVulnerabilities(ctx context.Context, source 
 	cutPoint := time.Now().UTC().Add(-1 * duration)
 	args = append(args, source, cutPoint)
 
-	if _, err := ds.writer.ExecContext(ctx, sql, args...); err != nil {
+	if _, err := ds.writer(ctx).ExecContext(ctx, sql, args...); err != nil {
 		return ctxerr.Wrap(ctx, err, "deleting out of date vulnerabilities")
 	}
 	return nil
 }
 
-func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores bool) (*fleet.Software, error) {
+func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, teamID *uint, includeCVEScores bool, tmFilter *fleet.TeamFilter) (*fleet.Software, error) {
 	q := dialect.From(goqu.I("software").As("s")).
 		Select(
 			"s.id",
 			"s.name",
 			"s.version",
 			"s.source",
+			"s.browser",
 			"s.bundle_identifier",
 			"s.release",
 			"s.vendor",
 			"s.arch",
+			"s.extension_id",
 			"scv.cve",
 			goqu.COALESCE(goqu.I("scp.cpe"), "").As("generated_cpe"),
 		).
@@ -1087,6 +1151,13 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 			goqu.On(goqu.I("s.id").Eq(goqu.I("scv.software_id"))),
 		)
 
+	if tmFilter != nil {
+		q = q.LeftJoin(
+			goqu.I("software_host_counts").As("shc"),
+			goqu.On(goqu.I("s.id").Eq(goqu.I("shc.software_id"))),
+		)
+	}
+
 	if includeCVEScores {
 		q = q.
 			LeftJoin(
@@ -1097,13 +1168,29 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 				"c.cvss_score",
 				"c.epss_probability",
 				"c.cisa_known_exploit",
+				"c.description",
 				goqu.I("c.published").As("cve_published"),
+				"scv.resolved_in_version",
 			)
 	}
 
 	q = q.Where(goqu.I("s.id").Eq(id))
 	// filter software that is not associated with any hosts
-	q = q.Where(goqu.L("EXISTS (SELECT 1 FROM host_software WHERE software_id = ? LIMIT 1)", id))
+	if teamID == nil {
+		q = q.Where(goqu.L("EXISTS (SELECT 1 FROM host_software WHERE software_id = ? LIMIT 1)", id))
+	} else {
+		// if teamID filter is used, host counts need to be up-to-date
+		q = q.Where(
+			goqu.L(
+				"EXISTS (SELECT 1 FROM software_host_counts WHERE software_id = ? AND team_id = ? AND hosts_count > 0)", id, *teamID,
+			),
+		)
+	}
+
+	// filter by teams
+	if tmFilter != nil {
+		q = q.Where(goqu.L(ds.whereFilterGlobalOrTeamIDByTeams(*tmFilter, "shc")))
+	}
 
 	sql, args, err := q.ToSQL()
 	if err != nil {
@@ -1111,7 +1198,7 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 	}
 
 	var results []softwareCVE
-	err = sqlx.SelectContext(ctx, ds.reader, &results, sql, args...)
+	err = sqlx.SelectContext(ctx, ds.reader(ctx), &results, sql, args...)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "get software")
 	}
@@ -1139,6 +1226,7 @@ func (ds *Datastore) SoftwareByID(ctx context.Context, id uint, includeCVEScores
 				cve.EPSSProbability = &result.EPSSProbability
 				cve.CISAKnownExploit = &result.CISAKnownExploit
 				cve.CVEPublished = &result.CVEPublished
+				cve.ResolvedInVersion = &result.ResolvedInVersion
 			}
 			software.Vulnerabilities = append(software.Vulnerabilities, cve)
 		}
@@ -1215,14 +1303,14 @@ func (ds *Datastore) SyncHostsSoftware(ctx context.Context, updatedAt time.Time)
 	)
 
 	// first, reset all counts to 0
-	if _, err := ds.writer.ExecContext(ctx, resetStmt, updatedAt); err != nil {
+	if _, err := ds.writer(ctx).ExecContext(ctx, resetStmt, updatedAt); err != nil {
 		return ctxerr.Wrap(ctx, err, "reset all software_host_counts to 0")
 	}
 
 	// next get a cursor for the global and team counts for each software
 	stmtLabel := []string{"global", "team"}
 	for i, countStmt := range []string{globalCountsStmt, teamCountsStmt} {
-		rows, err := ds.reader.QueryContext(ctx, countStmt)
+		rows, err := ds.reader(ctx).QueryContext(ctx, countStmt)
 		if err != nil {
 			return ctxerr.Wrapf(ctx, err, "read %s counts from host_software", stmtLabel[i])
 		}
@@ -1250,7 +1338,7 @@ func (ds *Datastore) SyncHostsSoftware(ctx context.Context, updatedAt time.Time)
 
 			if batchCount == batchSize {
 				values := strings.TrimSuffix(strings.Repeat(valuesPart, batchCount), ",")
-				if _, err := ds.writer.ExecContext(ctx, fmt.Sprintf(insertStmt, values), args...); err != nil {
+				if _, err := ds.writer(ctx).ExecContext(ctx, fmt.Sprintf(insertStmt, values), args...); err != nil {
 					return ctxerr.Wrapf(ctx, err, "insert %s batch into software_host_counts", stmtLabel[i])
 				}
 
@@ -1260,7 +1348,7 @@ func (ds *Datastore) SyncHostsSoftware(ctx context.Context, updatedAt time.Time)
 		}
 		if batchCount > 0 {
 			values := strings.TrimSuffix(strings.Repeat(valuesPart, batchCount), ",")
-			if _, err := ds.writer.ExecContext(ctx, fmt.Sprintf(insertStmt, values), args...); err != nil {
+			if _, err := ds.writer(ctx).ExecContext(ctx, fmt.Sprintf(insertStmt, values), args...); err != nil {
 				return ctxerr.Wrapf(ctx, err, "insert last %s batch into software_host_counts", stmtLabel[i])
 			}
 		}
@@ -1271,25 +1359,85 @@ func (ds *Datastore) SyncHostsSoftware(ctx context.Context, updatedAt time.Time)
 	}
 
 	// remove any unused software (global counts = 0)
-	if _, err := ds.writer.ExecContext(ctx, cleanupSoftwareStmt); err != nil {
+	if _, err := ds.writer(ctx).ExecContext(ctx, cleanupSoftwareStmt); err != nil {
 		return ctxerr.Wrap(ctx, err, "delete unused software")
 	}
 
 	// remove any software count row for software that don't exist anymore
-	if _, err := ds.writer.ExecContext(ctx, cleanupOrphanedStmt); err != nil {
-		return ctxerr.Wrap(ctx, err, "delete software_host_counts for non-existing teams")
+	if _, err := ds.writer(ctx).ExecContext(ctx, cleanupOrphanedStmt); err != nil {
+		return ctxerr.Wrap(ctx, err, "delete software_host_counts for non-existing software")
 	}
 
 	// remove any software count row for teams that don't exist anymore
-	if _, err := ds.writer.ExecContext(ctx, cleanupTeamStmt); err != nil {
+	if _, err := ds.writer(ctx).ExecContext(ctx, cleanupTeamStmt); err != nil {
 		return ctxerr.Wrap(ctx, err, "delete software_host_counts for non-existing teams")
 	}
 	return nil
 }
 
+func (ds *Datastore) ReconcileSoftwareTitles(ctx context.Context) error {
+	// TODO: consider if we should batch writes to software or software_titles table
+
+	// ensure all software titles are in the software_titles table
+	upsertTitlesStmt := `
+INSERT INTO software_titles (name, source, browser)
+SELECT DISTINCT
+	name,
+	source,
+	browser
+FROM
+	software s
+WHERE
+	NOT EXISTS (SELECT 1 FROM software_titles st WHERE (s.name, s.source, s.browser) = (st.name, st.source, st.browser))
+ON DUPLICATE KEY UPDATE software_titles.id = software_titles.id`
+	// TODO: consider the impact of on duplicate key update vs. risk of insert ignore
+	// or performing a select first to see if the title exists and only inserting
+	// new titles
+
+	res, err := ds.writer(ctx).ExecContext(ctx, upsertTitlesStmt)
+	if err != nil {
+		return ctxerr.Wrap(ctx, err, "upsert software titles")
+	}
+	n, _ := res.RowsAffected()
+	level.Debug(ds.logger).Log("msg", "upsert software titles", "rows_affected", n)
+
+	// update title ids for software table entries
+	updateSoftwareStmt := `
+UPDATE
+	software s,
+	software_titles st
+SET
+	s.title_id = st.id
+WHERE
+	(s.name, s.source, s.browser) = (st.name, st.source, st.browser)
+	AND (s.title_id IS NULL OR s.title_id != st.id)`
+
+	res, err = ds.writer(ctx).ExecContext(ctx, updateSoftwareStmt)
+	if err != nil {
+		return ctxerr.Wrap(ctx, err, "update software title_id")
+	}
+	n, _ = res.RowsAffected()
+	level.Debug(ds.logger).Log("msg", "update software title_id", "rows_affected", n)
+
+	// clean up orphaned software titles
+	cleanupStmt := `
+DELETE st FROM software_titles st
+	LEFT JOIN software s ON s.title_id = st.id
+	WHERE s.title_id IS NULL`
+
+	res, err = ds.writer(ctx).ExecContext(ctx, cleanupStmt)
+	if err != nil {
+		return ctxerr.Wrap(ctx, err, "cleanup orphaned software titles")
+	}
+	n, _ = res.RowsAffected()
+	level.Debug(ds.logger).Log("msg", "cleanup orphaned software titles", "rows_affected", n)
+
+	return nil
+}
+
 func (ds *Datastore) HostVulnSummariesBySoftwareIDs(ctx context.Context, softwareIDs []uint) ([]fleet.HostVulnerabilitySummary, error) {
 	stmt := `
-		SELECT DISTINCT 
+		SELECT DISTINCT
 			h.id,
 			h.hostname,
 			if(h.computer_name = '', h.hostname, h.computer_name) display_name,
@@ -1310,7 +1458,7 @@ func (ds *Datastore) HostVulnSummariesBySoftwareIDs(ctx context.Context, softwar
 		DisplayName string `db:"display_name"`
 		SPath       string `db:"software_installed_path"`
 	}
-	if err := sqlx.SelectContext(ctx, ds.reader, &qR, stmt, args...); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &qR, stmt, args...); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting hosts by softwareIDs")
 	}
 
@@ -1360,7 +1508,7 @@ func (ds *Datastore) HostsByCVE(ctx context.Context, cve string) ([]fleet.HostVu
 		DisplayName string `db:"display_name"`
 		SPath       string `db:"software_installed_path"`
 	}
-	if err := sqlx.SelectContext(ctx, ds.reader, &qR, stmt, cve); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &qR, stmt, cve); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting hosts by softwareIDs")
 	}
 
@@ -1391,13 +1539,14 @@ func (ds *Datastore) HostsByCVE(ctx context.Context, cve string) ([]fleet.HostVu
 
 func (ds *Datastore) InsertCVEMeta(ctx context.Context, cveMeta []fleet.CVEMeta) error {
 	query := `
-INSERT INTO cve_meta (cve, cvss_score, epss_probability, cisa_known_exploit, published)
+INSERT INTO cve_meta (cve, cvss_score, epss_probability, cisa_known_exploit, published, description)
 VALUES %s
 ON DUPLICATE KEY UPDATE
     cvss_score = VALUES(cvss_score),
     epss_probability = VALUES(epss_probability),
     cisa_known_exploit = VALUES(cisa_known_exploit),
-    published = VALUES(published)
+    published = VALUES(published),
+    description = VALUES(description)
 `
 
 	batchSize := 500
@@ -1409,15 +1558,15 @@ ON DUPLICATE KEY UPDATE
 
 		batch := cveMeta[i:end]
 
-		valuesFrag := strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?), ", len(batch)), ", ")
+		valuesFrag := strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?, ?), ", len(batch)), ", ")
 		var args []interface{}
 		for _, meta := range batch {
-			args = append(args, meta.CVE, meta.CVSSScore, meta.EPSSProbability, meta.CISAKnownExploit, meta.Published)
+			args = append(args, meta.CVE, meta.CVSSScore, meta.EPSSProbability, meta.CISAKnownExploit, meta.Published, meta.Description)
 		}
 
 		query := fmt.Sprintf(query, valuesFrag)
 
-		_, err := ds.writer.ExecContext(ctx, query, args...)
+		_, err := ds.writer(ctx).ExecContext(ctx, query, args...)
 		if err != nil {
 			return ctxerr.Wrap(ctx, err, "insert cve scores")
 		}
@@ -1437,10 +1586,17 @@ func (ds *Datastore) InsertSoftwareVulnerability(
 
 	var args []interface{}
 
-	stmt := `INSERT INTO software_cve (cve, source, software_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE updated_at=?`
-	args = append(args, vuln.CVE, source, vuln.SoftwareID, time.Now().UTC())
+	stmt := `
+		INSERT INTO software_cve (cve, source, software_id, resolved_in_version)
+		VALUES (?,?,?,?)
+		ON DUPLICATE KEY UPDATE
+			source = VALUES(source),
+			resolved_in_version = VALUES(resolved_in_version),
+			updated_at=?
+	`
+	args = append(args, vuln.CVE, source, vuln.SoftwareID, vuln.ResolvedInVersion, time.Now().UTC())
 
-	res, err := ds.writer.ExecContext(ctx, stmt, args...)
+	res, err := ds.writer(ctx).ExecContext(ctx, stmt, args...)
 	if err != nil {
 		return false, ctxerr.Wrap(ctx, err, "insert software vulnerability")
 	}
@@ -1473,6 +1629,7 @@ func (ds *Datastore) ListSoftwareVulnerabilitiesByHostIDsSource(
 			goqu.I("hs.host_id"),
 			goqu.I("sc.software_id"),
 			goqu.I("sc.cve"),
+			goqu.I("sc.resolved_in_version"),
 		).
 		Where(
 			goqu.I("hs.host_id").In(hostIDs),
@@ -1484,7 +1641,7 @@ func (ds *Datastore) ListSoftwareVulnerabilitiesByHostIDsSource(
 		return nil, ctxerr.Wrap(ctx, err, "error generating SQL statement")
 	}
 
-	if err := sqlx.SelectContext(ctx, ds.reader, &queryR, sql, args...); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &queryR, sql, args...); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "error executing SQL statement")
 	}
 
@@ -1530,7 +1687,7 @@ func (ds *Datastore) ListSoftwareForVulnDetection(
 		return nil, ctxerr.Wrap(ctx, err, "error generating SQL statement")
 	}
 
-	if err := sqlx.SelectContext(ctx, ds.reader, &result, sql, args...); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &result, sql, args...); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "error executing SQL statement")
 	}
 
@@ -1549,6 +1706,7 @@ func (ds *Datastore) ListCVEs(ctx context.Context, maxAge time.Duration) ([]flee
 			goqu.C("epss_probability"),
 			goqu.C("cisa_known_exploit"),
 			goqu.C("published"),
+			goqu.C("description"),
 		).
 		Where(goqu.C("published").Gte(maxAgeDate))
 
@@ -1557,7 +1715,7 @@ func (ds *Datastore) ListCVEs(ctx context.Context, maxAge time.Duration) ([]flee
 		return nil, ctxerr.Wrap(ctx, err, "error generating SQL statement")
 	}
 
-	if err := sqlx.SelectContext(ctx, ds.reader, &result, sql, args...); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &result, sql, args...); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "error executing SQL statement")
 	}
 

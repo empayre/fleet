@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,8 +18,9 @@ import (
 	"testing"
 	"time"
 
-	nanodep_client "github.com/micromdm/nanodep/client"
-	"github.com/micromdm/nanodep/tokenpki"
+	nanodep_client "github.com/fleetdm/fleet/v4/server/mdm/nanodep/client"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanodep/tokenpki"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/cryptoutil"
 	"github.com/spf13/cast"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -94,6 +94,7 @@ type ServerConfig struct {
 	Keepalive                   bool   `yaml:"keepalive"`
 	SandboxEnabled              bool   `yaml:"sandbox_enabled"`
 	WebsocketsAllowUnsafeOrigin bool   `yaml:"websockets_allow_unsafe_origin"`
+	FrequentCleanupsEnabled     bool   `yaml:"frequent_cleanups_enabled"`
 }
 
 func (s *ServerConfig) DefaultHTTPServer(ctx context.Context, handler http.Handler) *http.Server {
@@ -464,6 +465,26 @@ type MDMConfig struct {
 	// AppleSCEPSignerAllowRenewalDays are the allowable renewal days for
 	// certificates.
 	AppleSCEPSignerAllowRenewalDays int `yaml:"apple_scep_signer_allow_renewal_days"`
+
+	// WindowsWSTEPIdentityCert is the path to the certificate used to sign
+	// WSTEP responses.
+	WindowsWSTEPIdentityCert string `yaml:"windows_wstep_identity_cert"`
+	// WindowsWSTEPIdentityCertBytes is the content of the certificate used to sign
+	// WSTEP responses.
+	WindowsWSTEPIdentityCertBytes string `yaml:"windows_wstep_identity_cert_bytes"`
+	// WindowsWSTEPIdentityKey is the path to the private key used to sign
+	// WSTEP responses.
+	WindowsWSTEPIdentityKey string `yaml:"windows_wstep_identity_key"`
+	// WindowsWSTEPIdentityKey is the content of the private key used to sign
+	// WSTEP responses.
+	WindowsWSTEPIdentityKeyBytes string `yaml:"windows_wstep_identity_key_bytes"`
+
+	// the following fields hold the parsed, validated TLS certificate set the
+	// first time Microsoft WSTEP is called, as well as the PEM-encoded
+	// bytes for the certificate and private key.
+	microsoftWSTEP        *tls.Certificate
+	microsoftWSTEPCertPEM []byte
+	microsoftWSTEPKeyPEM  []byte
 }
 
 type x509KeyPairConfig struct {
@@ -575,6 +596,20 @@ func (m *MDMConfig) AppleAPNs() (cert *tls.Certificate, pemCert, pemKey []byte, 
 	return m.appleAPNs, m.appleAPNsPEMCert, m.appleAPNsPEMKey, nil
 }
 
+func (m *MDMConfig) AppleAPNsTopic() (string, error) {
+	apnsCert, _, _, err := m.AppleAPNs()
+	if err != nil {
+		return "", fmt.Errorf("parsing APNs certificates: %w", err)
+	}
+
+	mdmPushCertTopic, err := cryptoutil.TopicFromCert(apnsCert.Leaf)
+	if err != nil {
+		return "", fmt.Errorf("extracting topic from APNs certificate: %w", err)
+	}
+
+	return mdmPushCertTopic, nil
+}
+
 // AppleSCEP returns the parsed and validated TLS certificate for Apple SCEP.
 // It parses and validates it if it hasn't been done yet.
 func (m *MDMConfig) AppleSCEP() (cert *tls.Certificate, pemCert, pemKey []byte, err error) {
@@ -654,6 +689,37 @@ func (m *MDMConfig) loadAppleBMEncryptedToken() ([]byte, error) {
 	return tokBytes, nil
 }
 
+// MicrosoftWSTEP returns the parsed and validated TLS certificate for Microsoft WSTEP.
+// It parses and validates it if it hasn't been done yet.
+func (m *MDMConfig) MicrosoftWSTEP() (cert *tls.Certificate, pemCert, pemKey []byte, err error) {
+	if m.microsoftWSTEP == nil {
+		pair := x509KeyPairConfig{
+			m.WindowsWSTEPIdentityCert,
+			[]byte(m.WindowsWSTEPIdentityCertBytes),
+			m.WindowsWSTEPIdentityKey,
+			[]byte(m.WindowsWSTEPIdentityKeyBytes),
+		}
+		cert, err := pair.Parse(true)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("Microsoft MDM WSTEP configuration: %w", err)
+		}
+		m.microsoftWSTEP = cert
+		m.microsoftWSTEPCertPEM = pair.certBytes
+		m.microsoftWSTEPKeyPEM = pair.keyBytes
+	}
+	return m.microsoftWSTEP, m.microsoftWSTEPCertPEM, m.microsoftWSTEPKeyPEM, nil
+}
+
+func (m *MDMConfig) IsMicrosoftWSTEPSet() bool {
+	pair := x509KeyPairConfig{
+		m.WindowsWSTEPIdentityCert,
+		[]byte(m.WindowsWSTEPIdentityCertBytes),
+		m.WindowsWSTEPIdentityKey,
+		[]byte(m.WindowsWSTEPIdentityKeyBytes),
+	}
+	return pair.IsSet()
+}
+
 type TLS struct {
 	TLSCert       string
 	TLSKey        string
@@ -665,7 +731,7 @@ func (t *TLS) ToTLSConfig() (*tls.Config, error) {
 	var rootCertPool *x509.CertPool
 	if t.TLSCA != "" {
 		rootCertPool = x509.NewCertPool()
-		pem, err := ioutil.ReadFile(t.TLSCA)
+		pem, err := os.ReadFile(t.TLSCA)
 		if err != nil {
 			return nil, fmt.Errorf("read server-ca pem: %w", err)
 		}
@@ -753,7 +819,7 @@ func (man Manager) addConfigs() {
 	man.addConfigInt("redis.max_open_conns", 0, "Redis maximum open connections, 0 means no limit")
 	man.addConfigDuration("redis.conn_max_lifetime", 0, "Redis maximum amount of time a connection may be reused, 0 means no limit")
 	man.addConfigDuration("redis.idle_timeout", 240*time.Second, "Redis maximum amount of time a connection may stay idle, 0 means no limit")
-	man.addConfigDuration("redis.conn_wait_timeout", 0, "Redis maximum amount of time to wait for a connection if the maximum is reached (0 for no wait, ignored in non-cluster Redis)")
+	man.addConfigDuration("redis.conn_wait_timeout", 0, "Redis maximum amount of time to wait for a connection if the maximum is reached (0 for no wait)")
 	man.addConfigDuration("redis.write_timeout", 10*time.Second, "Redis maximum amount of time to wait for a write (send) on a connection")
 	man.addConfigDuration("redis.read_timeout", 10*time.Second, "Redis maximum amount of time to wait for a read (receive) on a connection")
 
@@ -776,6 +842,7 @@ func (man Manager) addConfigs() {
 	man.addConfigBool("server.sandbox_enabled", false,
 		"When enabled, Fleet limits some features for the Sandbox")
 	man.addConfigBool("server.websockets_allow_unsafe_origin", false, "Disable checking the origin header on websocket connections, this is sometimes necessary when proxies rewrite origin headers between the client and the Fleet webserver")
+	man.addConfigBool("server.frequent_cleanups_enabled", false, "Enable frequent cleanups of expired data (15 minute interval)")
 
 	// Hide the sandbox flag as we don't want it to be discoverable for users for now
 	sandboxFlag := man.command.PersistentFlags().Lookup(flagNameFromConfigKey("server.sandbox_enabled"))
@@ -1044,6 +1111,23 @@ func (man Manager) addConfigs() {
 	man.addConfigInt("mdm.apple_scep_signer_allow_renewal_days", 14, "Allowable renewal days for client certificates")
 	man.addConfigString("mdm.apple_scep_challenge", "", "SCEP static challenge for enrollment")
 	man.addConfigDuration("mdm.apple_dep_sync_periodicity", 1*time.Minute, "How much time to wait for DEP profile assignment")
+	man.addConfigString("mdm.windows_wstep_identity_cert", "", "Microsoft WSTEP PEM-encoded certificate path")
+	man.addConfigString("mdm.windows_wstep_identity_key", "", "Microsoft WSTEP PEM-encoded private key path")
+	man.addConfigString("mdm.windows_wstep_identity_cert_bytes", "", "Microsoft WSTEP PEM-encoded certificate bytes")
+	man.addConfigString("mdm.windows_wstep_identity_key_bytes", "", "Microsoft WSTEP PEM-encoded private key bytes")
+
+	// Hide Microsoft/Windows MDM flags as we don't want it to be discoverable for users for now
+	betaMDMFlags := []string{
+		"mdm.windows_wstep_identity_cert",
+		"mdm.windows_wstep_identity_key",
+		"mdm.windows_wstep_identity_cert_bytes",
+		"mdm.windows_wstep_identity_key_bytes",
+	}
+	for _, mdmFlag := range betaMDMFlags {
+		if flag := man.command.PersistentFlags().Lookup(flagNameFromConfigKey(mdmFlag)); flag != nil {
+			flag.Hidden = true
+		}
+	}
 }
 
 // LoadConfig will load the config variables into a fully initialized
@@ -1109,6 +1193,7 @@ func (man Manager) LoadConfig() FleetConfig {
 			Keepalive:                   man.getConfigBool("server.keepalive"),
 			SandboxEnabled:              man.getConfigBool("server.sandbox_enabled"),
 			WebsocketsAllowUnsafeOrigin: man.getConfigBool("server.websockets_allow_unsafe_origin"),
+			FrequentCleanupsEnabled:     man.getConfigBool("server.frequent_cleanups_enabled"),
 		},
 		Auth: AuthConfig{
 			BcryptCost:  man.getConfigInt("auth.bcrypt_cost"),
@@ -1304,6 +1389,10 @@ func (man Manager) LoadConfig() FleetConfig {
 			AppleSCEPSignerAllowRenewalDays: man.getConfigInt("mdm.apple_scep_signer_allow_renewal_days"),
 			AppleSCEPChallenge:              man.getConfigString("mdm.apple_scep_challenge"),
 			AppleDEPSyncPeriodicity:         man.getConfigDuration("mdm.apple_dep_sync_periodicity"),
+			WindowsWSTEPIdentityCert:        man.getConfigString("mdm.windows_wstep_identity_cert"),
+			WindowsWSTEPIdentityKey:         man.getConfigString("mdm.windows_wstep_identity_key"),
+			WindowsWSTEPIdentityCertBytes:   man.getConfigString("mdm.windows_wstep_identity_cert_bytes"),
+			WindowsWSTEPIdentityKeyBytes:    man.getConfigString("mdm.windows_wstep_identity_key_bytes"),
 		},
 	}
 
@@ -1628,7 +1717,7 @@ func TestConfig() FleetConfig {
 // all required pairs and the Apple BM token is used as-is, instead of
 // decrypting the encrypted value that is usually provided via the fleet
 // server's flags.
-func SetTestMDMConfig(t testing.TB, cfg *FleetConfig, cert, key []byte, appleBMToken *nanodep_client.OAuth1Tokens) {
+func SetTestMDMConfig(t testing.TB, cfg *FleetConfig, cert, key []byte, appleBMToken *nanodep_client.OAuth1Tokens, wstepCertAndKeyDir string) {
 	tlsCert, err := tls.X509KeyPair(cert, key)
 	if err != nil {
 		t.Fatal(err)
@@ -1657,14 +1746,16 @@ func SetTestMDMConfig(t testing.TB, cfg *FleetConfig, cert, key []byte, appleBMT
 	cfg.MDM.appleBMToken = appleBMToken
 	cfg.MDM.AppleSCEPSignerValidityDays = 365
 	cfg.MDM.AppleSCEPChallenge = "testchallenge"
-}
 
-// Undocumented feature flag for Windows MDM, used to determine if the Windows
-// MDM feature is visible in the UI and can be enabled. More details here:
-// https://github.com/fleetdm/fleet/issues/12257
-//
-// TODO: remove this flag once the Windows MDM feature is ready for
-// release.
-func IsMDMFeatureFlagEnabled() bool {
-	return os.Getenv("FLEET_DEV_MDM_ENABLED") == "1"
+	if wstepCertAndKeyDir == "" {
+		wstepCertAndKeyDir = "testdata"
+	}
+	certPath := filepath.Join(wstepCertAndKeyDir, "server.pem")
+	keyPath := filepath.Join(wstepCertAndKeyDir, "server.key")
+
+	cfg.MDM.WindowsWSTEPIdentityCert = certPath
+	cfg.MDM.WindowsWSTEPIdentityKey = keyPath
+	if _, _, _, err := cfg.MDM.MicrosoftWSTEP(); err != nil {
+		t.Fatal(err)
+	}
 }

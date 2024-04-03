@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -83,10 +85,9 @@ type requestDecoder interface {
 }
 
 // A value that implements bodyDecoder takes control of decoding the request
-// body. Other fields such as url and query parameters are decoded prior to
-// calling DecodeBody with the request's body as an io.Reader.
+// body.
 type bodyDecoder interface {
-	DecodeBody(ctx context.Context, r io.Reader) error
+	DecodeBody(ctx context.Context, r io.Reader, u url.Values, c []*x509.Certificate) error
 }
 
 // makeDecoder creates a decoder for the type for the struct passed on. If the
@@ -278,7 +279,7 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 				case reflect.Int:
 					queryValInt := 0
 					switch queryTagValue {
-					case "order_direction":
+					case "order_direction", "inherited_order_direction":
 						switch queryVal {
 						case "desc":
 							queryValInt = int(fleet.OrderDescending)
@@ -304,7 +305,12 @@ func makeDecoder(iface interface{}) kithttp.DecodeRequestFunc {
 
 		if isBodyDecoder {
 			bd := v.Interface().(bodyDecoder)
-			if err := bd.DecodeBody(ctx, body); err != nil {
+			var certs []*x509.Certificate
+			if (r.TLS != nil) && (r.TLS.PeerCertificates != nil) {
+				certs = r.TLS.PeerCertificates
+			}
+
+			if err := bd.DecodeBody(ctx, body, r.URL.Query(), certs); err != nil {
 				return nil, err
 			}
 		}
@@ -366,7 +372,7 @@ func newDeviceAuthenticatedEndpointer(svc fleet.Service, logger log.Logger, opts
 	}
 
 	// Inject the fleet.CapabilitiesHeader header to the response for device endpoints
-	opts = append(opts, capabilitiesResponseFunc(fleet.ServerDeviceCapabilities))
+	opts = append(opts, capabilitiesResponseFunc(fleet.GetServerDeviceCapabilities()))
 	// Add the capabilities reported by the device to the request context
 	opts = append(opts, capabilitiesContextFunc())
 
@@ -408,7 +414,7 @@ func newOrbitAuthenticatedEndpointer(svc fleet.Service, logger log.Logger, opts 
 	}
 
 	// Inject the fleet.Capabilities header to the response for Orbit hosts
-	opts = append(opts, capabilitiesResponseFunc(fleet.ServerOrbitCapabilities))
+	opts = append(opts, capabilitiesResponseFunc(fleet.GetServerOrbitCapabilities()))
 	// Add the capabilities reported by Orbit to the request context
 	opts = append(opts, capabilitiesContextFunc())
 
@@ -487,6 +493,10 @@ func (e *authEndpointer) POST(path string, f handlerFunc, v interface{}) {
 
 func (e *authEndpointer) GET(path string, f handlerFunc, v interface{}) {
 	e.handleEndpoint(path, f, v, "GET")
+}
+
+func (e *authEndpointer) PUT(path string, f handlerFunc, v interface{}) {
+	e.handleEndpoint(path, f, v, "PUT")
 }
 
 func (e *authEndpointer) PATCH(path string, f handlerFunc, v interface{}) {
@@ -584,6 +594,7 @@ func (e *authEndpointer) makeEndpoint(f handlerFunc, v interface{}) http.Handler
 		mw := e.customMiddleware[i]
 		endp = mw(endp)
 	}
+
 	return newServer(endp, makeDecoder(v), e.opts)
 }
 

@@ -121,7 +121,7 @@ func (ds *Datastore) GetLabelSpecs(ctx context.Context) ([]*fleet.LabelSpec, err
 	var specs []*fleet.LabelSpec
 	// Get basic specs
 	query := "SELECT id, name, description, query, platform, label_type, label_membership_type FROM labels"
-	if err := sqlx.SelectContext(ctx, ds.reader, &specs, query); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &specs, query); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "get labels")
 	}
 
@@ -144,7 +144,7 @@ SELECT id, name, description, query, platform, label_type, label_membership_type
 FROM labels
 WHERE name = ?
 `
-	if err := sqlx.SelectContext(ctx, ds.reader, &specs, query, name); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &specs, query, name); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "get label")
 	}
 	if len(specs) == 0 {
@@ -177,7 +177,7 @@ func (ds *Datastore) getLabelHostnames(ctx context.Context, label *fleet.LabelSp
 			WHERE label_id = (SELECT id FROM labels WHERE name = ?)
 		)
 	`
-	err := sqlx.SelectContext(ctx, ds.reader, &label.Hosts, sql, label.Name)
+	err := sqlx.SelectContext(ctx, ds.reader(ctx), &label.Hosts, sql, label.Name)
 	if err != nil {
 		return ctxerr.Wrap(ctx, err, "get hostnames for label")
 	}
@@ -196,7 +196,7 @@ func (ds *Datastore) NewLabel(ctx context.Context, label *fleet.Label, opts ...f
 		label_membership_type
 	) VALUES ( ?, ?, ?, ?, ?, ?)
 	`
-	result, err := ds.writer.ExecContext(
+	result, err := ds.writer(ctx).ExecContext(
 		ctx,
 		query,
 		label.Name,
@@ -217,11 +217,11 @@ func (ds *Datastore) NewLabel(ctx context.Context, label *fleet.Label, opts ...f
 
 func (ds *Datastore) SaveLabel(ctx context.Context, label *fleet.Label) (*fleet.Label, error) {
 	query := `UPDATE labels SET name = ?, description = ? WHERE id = ?`
-	_, err := ds.writer.ExecContext(ctx, query, label.Name, label.Description, label.ID)
+	_, err := ds.writer(ctx).ExecContext(ctx, query, label.Name, label.Description, label.ID)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "saving label")
 	}
-	return labelDB(ctx, label.ID, ds.writer)
+	return labelDB(ctx, label.ID, ds.writer(ctx))
 }
 
 // DeleteLabel deletes a fleet.Label
@@ -257,7 +257,7 @@ func (ds *Datastore) DeleteLabel(ctx context.Context, name string) error {
 
 // Label returns a fleet.Label identified by lid if one exists.
 func (ds *Datastore) Label(ctx context.Context, lid uint) (*fleet.Label, error) {
-	return labelDB(ctx, lid, ds.reader)
+	return labelDB(ctx, lid, ds.reader(ctx))
 }
 
 func labelDB(ctx context.Context, lid uint, q sqlx.QueryerContext) (*fleet.Label, error) {
@@ -282,6 +282,9 @@ func labelDB(ctx context.Context, lid uint, q sqlx.QueryerContext) (*fleet.Label
 
 // ListLabels returns all labels limited or sorted by fleet.ListOptions.
 func (ds *Datastore) ListLabels(ctx context.Context, filter fleet.TeamFilter, opt fleet.ListOptions) ([]*fleet.Label, error) {
+	if opt.After != "" {
+		return nil, &fleet.BadRequestError{Message: "after parameter is not supported"}
+	}
 	query := fmt.Sprintf(`
 			SELECT *,
 				(SELECT COUNT(1) FROM label_membership lm JOIN hosts h ON (lm.host_id = h.id) WHERE label_id = l.id AND %s) AS host_count
@@ -289,10 +292,10 @@ func (ds *Datastore) ListLabels(ctx context.Context, filter fleet.TeamFilter, op
 		`, ds.whereFilterHostsByTeams(filter, "h"),
 	)
 
-	query = appendListOptionsToSQL(query, &opt)
+	query, params := appendListOptionsToSQL(query, &opt)
 	labels := []*fleet.Label{}
 
-	if err := sqlx.SelectContext(ctx, ds.reader, &labels, query); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &labels, query, params...); err != nil {
 		// it's ok if no labels exist
 		if err == sql.ErrNoRows {
 			return labels, nil
@@ -318,7 +321,7 @@ func (ds *Datastore) LabelQueriesForHost(ctx context.Context, host *fleet.Host) 
 	var err error
 	platform := platformForHost(host)
 	query := `SELECT id, query FROM labels WHERE platform = ? OR platform = '' AND label_membership_type = ?`
-	rows, err = ds.reader.QueryContext(ctx, query, platform, fleet.LabelMembershipTypeDynamic)
+	rows, err = ds.reader(ctx).QueryContext(ctx, query, platform, fleet.LabelMembershipTypeDynamic)
 
 	if err != nil && err != sql.ErrNoRows {
 		return nil, ctxerr.Wrap(ctx, err, "selecting label queries for host")
@@ -449,7 +452,7 @@ func (ds *Datastore) ListLabelsForHost(ctx context.Context, hid uint) ([]*fleet.
 	`
 
 	labels := []*fleet.Label{}
-	err := sqlx.SelectContext(ctx, ds.reader, &labels, sqlStatement, hid)
+	err := sqlx.SelectContext(ctx, ds.reader(ctx), &labels, sqlStatement, hid)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting host labels")
 	}
@@ -458,7 +461,7 @@ func (ds *Datastore) ListLabelsForHost(ctx context.Context, hid uint) ([]*fleet.
 }
 
 // ListHostsInLabel returns a list of fleet.Host that are associated
-// with fleet.Label referened by Label ID
+// with fleet.Label referenced by Label ID
 func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilter, lid uint, opt fleet.HostListOptions) ([]*fleet.Host, error) {
 	queryFmt := `
     SELECT
@@ -503,11 +506,14 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
       h.public_ip,
       COALESCE(hd.gigs_disk_space_available, 0) as gigs_disk_space_available,
       COALESCE(hd.percent_disk_space_available, 0) as percent_disk_space_available,
+      COALESCE(hd.gigs_total_disk_space, 0) as gigs_total_disk_space,
       COALESCE(hst.seen_time, h.created_at) as seen_time,
       COALESCE(hu.software_updated_at, h.created_at) AS software_updated_at,
+      (CASE WHEN uptime = 0 THEN DATE('0001-01-01') ELSE DATE_SUB(h.detail_updated_at, INTERVAL uptime/1000 MICROSECOND) END) as last_restarted_at,
       (SELECT name FROM teams t WHERE t.id = h.team_id) AS team_name
       %s
       %s
+			%s
     FROM label_membership lm
     JOIN hosts h ON (lm.host_id = h.id)
     LEFT JOIN host_seen_times hst ON (h.id=hst.host_id)
@@ -515,6 +521,7 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
     LEFT JOIN host_disks hd ON (h.id=hd.host_id)
     %s
     %s
+		%s
 `
 	failingPoliciesSelect := `,
 		COALESCE(failing_policies.count, 0) AS failing_policies_count,
@@ -530,12 +537,33 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
 		failingPoliciesJoin = ""
 	}
 
-	query := fmt.Sprintf(queryFmt, hostMDMSelect, failingPoliciesSelect, hostMDMJoin, failingPoliciesJoin)
+	deviceMappingJoin := fmt.Sprintf(`LEFT JOIN (
+	SELECT
+		host_id,
+		CONCAT('[', GROUP_CONCAT(JSON_OBJECT('email', email, 'source', %s)), ']') AS device_mapping
+	FROM
+		host_emails
+	GROUP BY
+		host_id) dm ON dm.host_id = h.id`, deviceMappingTranslateSourceColumn(""))
+	if !opt.DeviceMapping {
+		deviceMappingJoin = ""
+	}
 
-	query, params := ds.applyHostLabelFilters(filter, lid, query, opt)
+	var deviceMappingSelect string
+	if opt.DeviceMapping {
+		deviceMappingSelect = `,
+	COALESCE(dm.device_mapping, 'null') as device_mapping`
+	}
+
+	query := fmt.Sprintf(queryFmt, hostMDMSelect, failingPoliciesSelect, deviceMappingSelect, hostMDMJoin, failingPoliciesJoin, deviceMappingJoin)
+
+	query, params, err := ds.applyHostLabelFilters(ctx, filter, lid, query, opt)
+	if err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "applying label query filters")
+	}
 
 	hosts := []*fleet.Host{}
-	err := sqlx.SelectContext(ctx, ds.reader, &hosts, query, params...)
+	err = sqlx.SelectContext(ctx, ds.reader(ctx), &hosts, query, params...)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting label query executions")
 	}
@@ -543,7 +571,7 @@ func (ds *Datastore) ListHostsInLabel(ctx context.Context, filter fleet.TeamFilt
 }
 
 // NOTE: the hosts table must be aliased to `h` in the query passed to this function.
-func (ds *Datastore) applyHostLabelFilters(filter fleet.TeamFilter, lid uint, query string, opt fleet.HostListOptions) (string, []interface{}) {
+func (ds *Datastore) applyHostLabelFilters(ctx context.Context, filter fleet.TeamFilter, lid uint, query string, opt fleet.HostListOptions) (string, []interface{}, error) {
 	params := []interface{}{lid}
 
 	if opt.ListOptions.OrderKey == "display_name" {
@@ -556,34 +584,49 @@ func (ds *Datastore) applyHostLabelFilters(filter fleet.TeamFilter, lid uint, qu
 		params = append(params, *opt.LowDiskSpaceFilter)
 	}
 
+	var err error
 	query, params = filterHostsByStatus(ds.clock.Now(), query, opt, params)
 	query, params = filterHostsByTeam(query, opt, params)
 	query, params = filterHostsByMDM(query, opt, params)
-	query, params = filterHostsByMacOSSettingsStatus(query, opt, params)
+	query, params, err = filterHostsByMacOSSettingsStatus(query, opt, params)
+	if err != nil {
+		return "", nil, ctxerr.Wrap(ctx, err, "building macOS settings status filter")
+	}
 	query, params = filterHostsByMacOSDiskEncryptionStatus(query, opt, params)
 	query, params = filterHostsByMDMBootstrapPackageStatus(query, opt, params)
-	query, params = searchLike(query, params, opt.MatchQuery, hostSearchColumns...)
+	if enableDiskEncryption, err := ds.getConfigEnableDiskEncryption(ctx, opt.TeamFilter); err != nil {
+		return "", nil, err
+	} else if opt.OSSettingsFilter.IsValid() {
+		query, params, err = ds.filterHostsByOSSettingsStatus(query, opt, params, enableDiskEncryption)
+		if err != nil {
+			return "", nil, err
+		}
+	} else if opt.OSSettingsDiskEncryptionFilter.IsValid() {
+		query, params = ds.filterHostsByOSSettingsDiskEncryptionStatus(query, opt, params, enableDiskEncryption)
+	}
+	// TODO: should search columns include display_name (requires join to host_display_names)?
+	query, params, _ = hostSearchLike(query, params, opt.MatchQuery, hostSearchColumns...)
 
-	query = appendListOptionsToSQL(query, &opt.ListOptions)
-	return query, params
+	query, params = appendListOptionsWithCursorToSQL(query, params, &opt.ListOptions)
+	return query, params, nil
 }
 
 func (ds *Datastore) CountHostsInLabel(ctx context.Context, filter fleet.TeamFilter, lid uint, opt fleet.HostListOptions) (int, error) {
 	query := `SELECT count(*) FROM label_membership lm
     JOIN hosts h ON (lm.host_id = h.id)
 	LEFT JOIN host_seen_times hst ON (h.id=hst.host_id)
+	LEFT JOIN host_disks hd ON (h.id=hd.host_id)
  	`
 
 	query += hostMDMJoin
 
-	if opt.LowDiskSpaceFilter != nil {
-		query += ` LEFT JOIN host_disks hd ON (h.id=hd.host_id) `
+	query, params, err := ds.applyHostLabelFilters(ctx, filter, lid, query, opt)
+	if err != nil {
+		return 0, err
 	}
 
-	query, params := ds.applyHostLabelFilters(filter, lid, query, opt)
-
 	var count int
-	if err := sqlx.GetContext(ctx, ds.reader, &count, query, params...); err != nil {
+	if err := sqlx.GetContext(ctx, ds.reader(ctx), &count, query, params...); err != nil {
 		return 0, ctxerr.Wrap(ctx, err, "count hosts")
 	}
 
@@ -638,6 +681,7 @@ func (ds *Datastore) ListUniqueHostsInLabels(ctx context.Context, filter fleet.T
         h.public_ip,
         COALESCE(hd.gigs_disk_space_available, 0) as gigs_disk_space_available,
         COALESCE(hd.percent_disk_space_available, 0) as percent_disk_space_available,
+        COALESCE(hd.gigs_total_disk_space, 0) as gigs_total_disk_space,
         (SELECT name FROM teams t WHERE t.id = h.team_id) AS team_name
       FROM label_membership lm
       JOIN hosts h ON lm.host_id = h.id
@@ -651,9 +695,9 @@ func (ds *Datastore) ListUniqueHostsInLabels(ctx context.Context, filter fleet.T
 		return nil, ctxerr.Wrap(ctx, err, "building query listing unique hosts in labels")
 	}
 
-	query = ds.reader.Rebind(query)
+	query = ds.reader(ctx).Rebind(query)
 	hosts := []*fleet.Host{}
-	err = sqlx.SelectContext(ctx, ds.reader, &hosts, query, args...)
+	err = sqlx.SelectContext(ctx, ds.reader(ctx), &hosts, query, args...)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "listing unique hosts in labels")
 	}
@@ -684,10 +728,10 @@ func (ds *Datastore) searchLabelsWithOmits(ctx context.Context, filter fleet.Tea
 		return nil, ctxerr.Wrap(ctx, err, "building query for labels with omits")
 	}
 
-	sql = ds.reader.Rebind(sql)
+	sql = ds.reader(ctx).Rebind(sql)
 
 	matches := []*fleet.Label{}
-	err = sqlx.SelectContext(ctx, ds.reader, &matches, sql, args...)
+	err = sqlx.SelectContext(ctx, ds.reader(ctx), &matches, sql, args...)
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting labels with omits")
 	}
@@ -719,7 +763,7 @@ func (ds *Datastore) addAllHostsLabelToList(ctx context.Context, filter fleet.Te
 	)
 
 	var allHosts fleet.Label
-	if err := sqlx.GetContext(ctx, ds.reader, &allHosts, sql, fleet.LabelTypeBuiltIn); err != nil {
+	if err := sqlx.GetContext(ctx, ds.reader(ctx), &allHosts, sql, fleet.LabelTypeBuiltIn); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "get all hosts label")
 	}
 
@@ -767,8 +811,8 @@ func (ds *Datastore) searchLabelsDefault(ctx context.Context, filter fleet.TeamF
 	if err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "searching default labels")
 	}
-	sql = ds.reader.Rebind(sql)
-	if err := sqlx.SelectContext(ctx, ds.reader, &labels, sql, args...); err != nil {
+	sql = ds.reader(ctx).Rebind(sql)
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &labels, sql, args...); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "searching default labels rebound")
 	}
 
@@ -809,7 +853,7 @@ func (ds *Datastore) SearchLabels(ctx context.Context, filter fleet.TeamFilter, 
 	)
 
 	matches := []*fleet.Label{}
-	if err := sqlx.SelectContext(ctx, ds.reader, &matches, sql, transformedQuery); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &matches, sql, transformedQuery); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "selecting labels for search")
 	}
 
@@ -821,27 +865,32 @@ func (ds *Datastore) SearchLabels(ctx context.Context, filter fleet.TeamFilter, 
 	return matches, nil
 }
 
-func (ds *Datastore) LabelIDsByName(ctx context.Context, labels []string) ([]uint, error) {
-	if len(labels) == 0 {
-		return []uint{}, nil
+func (ds *Datastore) LabelIDsByName(ctx context.Context, names []string) (map[string]uint, error) {
+	if len(names) == 0 {
+		return map[string]uint{}, nil
 	}
 
 	sqlStatement := `
-		SELECT id FROM labels
+		SELECT id, name FROM labels
 		WHERE name IN (?)
 	`
 
-	sql, args, err := sqlx.In(sqlStatement, labels)
+	sql, args, err := sqlx.In(sqlStatement, names)
 	if err != nil {
-		return nil, ctxerr.Wrap(ctx, err, "building query to get label IDs")
+		return nil, ctxerr.Wrap(ctx, err, "building query to get label ids by name")
 	}
 
-	var labelIDs []uint
-	if err := sqlx.SelectContext(ctx, ds.reader, &labelIDs, sql, args...); err != nil {
-		return nil, ctxerr.Wrap(ctx, err, "get label IDs")
+	var labels []fleet.Label
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &labels, sql, args...); err != nil {
+		return nil, ctxerr.Wrap(ctx, err, "get label ids by name")
 	}
 
-	return labelIDs, nil
+	result := make(map[string]uint, len(labels))
+	for _, label := range labels {
+		result[label.Name] = label.ID
+	}
+
+	return result, nil
 }
 
 // AsyncBatchInsertLabelMembership inserts into the label_membership table the
@@ -923,8 +972,36 @@ func amountLabelsDB(ctx context.Context, db sqlx.QueryerContext) (int, error) {
 
 func (ds *Datastore) LabelsSummary(ctx context.Context) ([]*fleet.LabelSummary, error) {
 	labelsSummary := []*fleet.LabelSummary{}
-	if err := sqlx.SelectContext(ctx, ds.reader, &labelsSummary, "SELECT id, name, description, label_type FROM labels"); err != nil {
+	if err := sqlx.SelectContext(ctx, ds.reader(ctx), &labelsSummary, "SELECT id, name, description, label_type FROM labels"); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "labels summary")
 	}
 	return labelsSummary, nil
+}
+
+// HostMemberOfAllLabels returns whether the given host is a member of all the provided labels.
+// If the labels do not exist, then the host is considered not a member of the provided labels.
+// A host will always be a member of an empty label set, so this method returns (true, nil)
+// if labelNames is empty.
+func (ds *Datastore) HostMemberOfAllLabels(ctx context.Context, hostID uint, labelNames []string) (bool, error) {
+	if len(labelNames) == 0 {
+		return true, nil
+	}
+
+	sqlStatement := `
+		SELECT COUNT(*) = ? FROM labels l
+		LEFT JOIN (SELECT label_id FROM label_membership WHERE host_id = ?) lm
+		ON l.id = lm.label_id
+		WHERE l.name IN (?) AND lm.label_id IS NOT NULL;
+	`
+	sql, args, err := sqlx.In(sqlStatement, len(labelNames), hostID, labelNames)
+	if err != nil {
+		return false, ctxerr.Wrap(ctx, err, "building query to get label IDs")
+	}
+
+	var ok bool
+	if err := sqlx.GetContext(ctx, ds.reader(ctx), &ok, sql, args...); err != nil {
+		return false, ctxerr.Wrap(ctx, err, "get label IDs")
+	}
+
+	return ok, nil
 }

@@ -43,7 +43,11 @@ const AutomaticEnrollment = ({ router }: IAutomaticEnrollment) => {
   if (!isPremiumTier) return <PremiumFeatureMessage />;
 
   if (isLoadingMdmApple) {
-    return <Spinner />;
+    return (
+      <div className={baseClass}>
+        <Spinner />
+      </div>
+    );
   }
 
   if (errorMdmApple?.status === 404) {
@@ -64,7 +68,7 @@ const AutomaticEnrollment = ({ router }: IAutomaticEnrollment) => {
   return (
     <div className={baseClass}>
       <div className={`${baseClass}__section`}>
-        <AppleBusinessManagerSection />
+        <AppleBusinessManagerSection router={router} />
       </div>
       <div className={`${baseClass}__section`}>
         <IdpSection />

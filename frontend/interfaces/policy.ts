@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { IPlatformString } from "interfaces/platform";
+import { SelectedPlatformString } from "interfaces/platform";
 
 // Legacy PropTypes used on host interface
 export default PropTypes.shape({
@@ -22,6 +22,10 @@ export interface IStoredPolicyResponse {
   policy: IPolicy;
 }
 
+export interface IPoliciesCountResponse {
+  count: number;
+}
+
 export interface IPolicy {
   id: number;
   name: string;
@@ -31,20 +35,22 @@ export interface IPolicy {
   author_name: string;
   author_email: string;
   resolution: string;
-  platform: IPlatformString;
+  platform: SelectedPlatformString;
   team_id?: number;
   created_at: string;
   updated_at: string;
   critical: boolean;
+  calendar_events_enabled: boolean;
 }
 
 // Used on the manage hosts page and other places where aggregate stats are displayed
 export interface IPolicyStats extends IPolicy {
   passing_host_count: number;
   failing_host_count: number;
+  host_count_updated_at: string;
   webhook: string;
   has_run: boolean;
-  osquery_policy_ms: number;
+  next_update_ms: number;
 }
 
 export interface IPolicyWebhookPreviewPayload {
@@ -80,11 +86,12 @@ export interface IPolicyFormData {
   description?: string | number | boolean | undefined;
   resolution?: string | number | boolean | undefined;
   critical?: boolean;
-  platform?: IPlatformString;
+  platform?: SelectedPlatformString;
   name?: string | number | boolean | undefined;
   query?: string | number | boolean | undefined;
   team_id?: number;
   id?: number;
+  calendar_events_enabled?: boolean;
 }
 
 export interface IPolicyNew {
@@ -95,6 +102,6 @@ export interface IPolicyNew {
   query: string;
   resolution: string;
   critical: boolean;
-  platform: IPlatformString;
+  platform: SelectedPlatformString;
   mdm_required?: boolean;
 }

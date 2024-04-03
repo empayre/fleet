@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useEffect, useContext } from "react";
 import { InjectedRouter } from "react-router";
 
 import paths from "router/paths";
@@ -26,7 +26,6 @@ const LoginPreviewPage = ({ router }: ILoginPreviewPageProps): JSX.Element => {
     setCurrentUser,
     setCurrentTeam,
   } = useContext(AppContext);
-  const [loginVisible, setLoginVisible] = useState(true);
 
   const onSubmit = async (formData: ILoginData) => {
     const { DASHBOARD } = paths;
@@ -37,7 +36,6 @@ const LoginPreviewPage = ({ router }: ILoginPreviewPageProps): JSX.Element => {
       );
       local.setItem("auth_token", token);
 
-      setLoginVisible(false);
       setCurrentUser(user);
       setAvailableTeams(user, available_teams);
       setCurrentTeam(undefined);
@@ -61,7 +59,7 @@ const LoginPreviewPage = ({ router }: ILoginPreviewPageProps): JSX.Element => {
   return (
     <AuthenticationFormWrapper>
       <LoginSuccessfulPage />
-      <LoginForm handleSubmit={onSubmit} isHidden={!loginVisible} />
+      <LoginForm handleSubmit={onSubmit} />
     </AuthenticationFormWrapper>
   );
 };

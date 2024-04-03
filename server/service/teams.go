@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/text/unicode/norm"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
 	"github.com/fleetdm/fleet/v4/server/fleet"
@@ -180,7 +183,7 @@ type applyTeamSpecsRequest struct {
 	Specs  []*fleet.TeamSpec `json:"specs"`
 }
 
-func (req *applyTeamSpecsRequest) DecodeBody(ctx context.Context, r io.Reader) error {
+func (req *applyTeamSpecsRequest) DecodeBody(ctx context.Context, r io.Reader, u url.Values, c []*x509.Certificate) error {
 	if err := fleet.JSONStrictDecode(r, req); err != nil {
 		err = fleet.NewUserMessageError(err, http.StatusBadRequest)
 		if !req.Force || !fleet.IsJSONUnknownFieldError(err) {
@@ -227,6 +230,8 @@ func applyTeamSpecsEndpoint(ctx context.Context, request interface{}, svc fleet.
 	actualSpecs := make([]*fleet.TeamSpec, 0, len(req.Specs))
 	for _, spec := range req.Specs {
 		if spec != nil {
+			// Normalize the team name for full Unicode support to prevent potential issue further in the spec flow
+			spec.Name = norm.NFC.String(spec.Name)
 			actualSpecs = append(actualSpecs, spec)
 		}
 	}

@@ -1,4 +1,4 @@
-export type IOsqueryPlatform =
+export type OsqueryPlatform =
   | "darwin"
   | "macOS"
   | "windows"
@@ -8,40 +8,25 @@ export type IOsqueryPlatform =
   | "chrome"
   | "ChromeOS";
 
-export type ISelectedPlatform =
-  | "all"
-  | "darwin"
-  | "windows"
-  | "linux"
-  | "chrome";
+export type SupportedPlatform = "darwin" | "windows" | "linux" | "chrome";
 
-export type IPlatformString =
-  | ""
-  | "darwin"
-  | "windows"
-  | "linux"
-  | "chrome"
-  | "darwin,windows,linux,chrome"
-  | "darwin,windows,linux"
-  | "darwin,linux,chrome"
-  | "darwin,windows,chrome"
-  | "windows,linux,chrome"
-  | "darwin,windows"
-  | "darwin,linux"
-  | "darwin,chrome"
-  | "windows,linux"
-  | "windows,chrome"
-  | "linux,chrome";
-
-export const SUPPORTED_PLATFORMS = [
+export const SUPPORTED_PLATFORMS: SupportedPlatform[] = [
   "darwin",
   "windows",
   "linux",
   "chrome",
-] as const;
+];
+export type SelectedPlatform = SupportedPlatform | "all";
+
+export type SelectedPlatformString =
+  | ""
+  | SupportedPlatform
+  | `${SupportedPlatform},${SupportedPlatform}`
+  | `${SupportedPlatform},${SupportedPlatform},${SupportedPlatform}`
+  | `${SupportedPlatform},${SupportedPlatform},${SupportedPlatform},${SupportedPlatform}`;
 
 // TODO: revisit this approach pending resolution of https://github.com/fleetdm/fleet/issues/3555.
-export const MACADMINS_EXTENSION_TABLES: Record<string, IOsqueryPlatform[]> = {
+export const MACADMINS_EXTENSION_TABLES: Record<string, OsqueryPlatform[]> = {
   file_lines: ["darwin", "linux", "windows"],
   filevault_users: ["darwin"],
   google_chrome_profiles: ["darwin", "linux", "windows"],
@@ -54,4 +39,39 @@ export const MACADMINS_EXTENSION_TABLES: Record<string, IOsqueryPlatform[]> = {
   puppet_logs: ["darwin", "linux", "windows"],
   puppet_state: ["darwin", "linux", "windows"],
   macadmins_unified_log: ["darwin"],
+};
+
+/**
+ * Host Linux OSs as defined by the Fleet server.
+ *
+ * @see https://github.com/fleetdm/fleet/blob/5a21e2cfb029053ddad0508869eb9f1f23997bf2/server/fleet/hosts.go#L780
+ */
+export const HOST_LINUX_PLATFORMS = [
+  "linux",
+  "ubuntu",
+  "debian",
+  "rhel",
+  "centos",
+  "sles",
+  "kali",
+  "gentoo",
+  "amzn",
+  "pop",
+  "arch",
+  "linuxmint",
+  "void",
+  "nixos",
+  "endeavouros",
+  "manjaro",
+  "opensuse-leap",
+  "opensuse-tumbleweed",
+] as const;
+
+/**
+ * Checks if the provided platform is a Linux-like OS. We can recieve many
+ * different types of host platforms so we need a check that will cover all
+ * the possible Linux-like platform values.
+ */
+export const isLinuxLike = (platform: string) => {
+  return HOST_LINUX_PLATFORMS.includes(platform as any);
 };

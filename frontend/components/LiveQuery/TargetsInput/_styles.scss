@@ -11,13 +11,33 @@
     border-radius: 0px 0px 8px 8px;
 
     .table-container {
-      min-height: 225px;
       box-shadow: 0px 4px 10px rgba(52, 59, 96, 0.15);
       border-radius: 0px 0px 8px 8px;
       .data-table__wrapper {
         overflow: auto;
       }
+
+      &__data-table-block > div {
+        min-height: 89px;
+      }
+
+      // Properly vertically aligns host issue icon
+      .display_name__cell {
+        display: inline-flex;
+        align-items: center;
+        white-space: nowrap;
+
+        .host-issue {
+          margin-left: $pad-xsmall;
+          display: inline-flex;
+        }
+      }
+
+      .data-table-block {
+        display: initial;
+      }
     }
+
     .empty-search,
     .error-search {
       padding-top: 72px;
@@ -52,9 +72,16 @@
       &__wrapper {
         margin: 0;
       }
-      .host-issue {
-        .icon {
-          vertical-align: inherit;
+
+      // Properly vertically aligns host issue icon
+      .display_name__cell {
+        display: inline-flex;
+        align-items: center;
+        white-space: nowrap;
+
+        .host-issue {
+          margin-left: $pad-xsmall;
+          display: inline-flex;
         }
       }
     }
@@ -62,12 +89,6 @@
   &__hosts-selected-table {
     margin-top: 8px;
 
-    img {
-      cursor: pointer;
-      transform: scale(0.5);
-      position: relative;
-      top: 2px;
-    }
     .data-table__wrapper {
       width: 100%;
       overflow: auto;

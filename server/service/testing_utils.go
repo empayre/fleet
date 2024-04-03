@@ -17,10 +17,17 @@ import (
 	eeservice "github.com/fleetdm/fleet/v4/ee/server/service"
 	"github.com/fleetdm/fleet/v4/server/config"
 	"github.com/fleetdm/fleet/v4/server/contexts/license"
+	"github.com/fleetdm/fleet/v4/server/datastore/cached_mysql"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/logging"
 	"github.com/fleetdm/fleet/v4/server/mail"
 	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
+	microsoft_mdm "github.com/fleetdm/fleet/v4/server/mdm/microsoft"
+	nanodep_storage "github.com/fleetdm/fleet/v4/server/mdm/nanodep/storage"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/mdm"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/push"
+	nanomdm_push "github.com/fleetdm/fleet/v4/server/mdm/nanomdm/push"
+	scep_depot "github.com/fleetdm/fleet/v4/server/mdm/scep/depot"
 	nanodep_mock "github.com/fleetdm/fleet/v4/server/mock/nanodep"
 	"github.com/fleetdm/fleet/v4/server/ptr"
 	"github.com/fleetdm/fleet/v4/server/service/async"
@@ -29,12 +36,6 @@ import (
 	"github.com/fleetdm/fleet/v4/server/test"
 	kitlog "github.com/go-kit/kit/log"
 	"github.com/google/uuid"
-	nanodep_storage "github.com/micromdm/nanodep/storage"
-	"github.com/micromdm/nanomdm/mdm"
-	"github.com/micromdm/nanomdm/push"
-	nanomdm_push "github.com/micromdm/nanomdm/push"
-	nanomdm_storage "github.com/micromdm/nanomdm/storage"
-	scep_depot "github.com/micromdm/scep/v2/depot"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/throttled/throttled/v2"
@@ -54,14 +55,14 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 	logger := kitlog.NewNopLogger()
 
 	var (
-		failingPolicySet  fleet.FailingPolicySet     = NewMemFailingPolicySet()
-		enrollHostLimiter fleet.EnrollHostLimiter    = nopEnrollHostLimiter{}
-		depStorage        nanodep_storage.AllStorage = &nanodep_mock.Storage{}
-		mailer            fleet.MailService          = &mockMailService{SendEmailFn: func(e fleet.Email) error { return nil }}
-		c                 clock.Clock                = clock.C
+		failingPolicySet  fleet.FailingPolicySet        = NewMemFailingPolicySet()
+		enrollHostLimiter fleet.EnrollHostLimiter       = nopEnrollHostLimiter{}
+		depStorage        nanodep_storage.AllDEPStorage = &nanodep_mock.Storage{}
+		mailer            fleet.MailService             = &mockMailService{SendEmailFn: func(e fleet.Email) error { return nil }}
+		c                 clock.Clock                   = clock.C
 
 		is          fleet.InstallerStore
-		mdmStorage  nanomdm_storage.AllStorage
+		mdmStorage  fleet.MDMAppleStore
 		mdmPusher   nanomdm_push.Pusher
 		ssoStore    sso.SessionStore
 		profMatcher fleet.ProfileMatcher
@@ -133,6 +134,17 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 		mdmPushCertTopic = opts[0].APNSTopic
 	}
 
+	var wstepManager microsoft_mdm.CertManager
+	if fleetConfig.MDM.WindowsWSTEPIdentityCert != "" && fleetConfig.MDM.WindowsWSTEPIdentityKey != "" {
+		rawCert, err := os.ReadFile(fleetConfig.MDM.WindowsWSTEPIdentityCert)
+		require.NoError(t, err)
+		rawKey, err := os.ReadFile(fleetConfig.MDM.WindowsWSTEPIdentityKey)
+		require.NoError(t, err)
+
+		wstepManager, err = microsoft_mdm.NewCertManager(ds, rawCert, rawKey)
+		require.NoError(t, err)
+	}
+
 	svc, err := NewService(
 		ctx,
 		ds,
@@ -155,6 +167,7 @@ func newTestServiceWithConfig(t *testing.T, ds fleet.Datastore, fleetConfig conf
 		mdmPusher,
 		mdmPushCertTopic,
 		cronSchedulesService,
+		wstepManager,
 	)
 	if err != nil {
 		panic(err)
@@ -266,8 +279,8 @@ type TestServerOpts struct {
 	EnrollHostLimiter   fleet.EnrollHostLimiter
 	Is                  fleet.InstallerStore
 	FleetConfig         *config.FleetConfig
-	MDMStorage          nanomdm_storage.AllStorage
-	DEPStorage          nanodep_storage.AllStorage
+	MDMStorage          fleet.MDMAppleStore
+	DEPStorage          nanodep_storage.AllDEPStorage
 	SCEPStorage         scep_depot.Depot
 	MDMPusher           nanomdm_push.Pusher
 	HTTPServerConfig    *http.Server
@@ -275,9 +288,14 @@ type TestServerOpts struct {
 	UseMailService      bool
 	APNSTopic           string
 	ProfileMatcher      fleet.ProfileMatcher
+	EnableCachedDS      bool
+	NoCacheDatastore    bool
 }
 
 func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServerOpts) (map[string]fleet.User, *httptest.Server) {
+	if len(opts) > 0 && opts[0].EnableCachedDS {
+		ds = cached_mysql.New(ds)
+	}
 	var rs fleet.QueryResultStore
 	if len(opts) > 0 && opts[0].Rs != nil {
 		rs = opts[0].Rs
@@ -321,12 +339,16 @@ func RunServerForTestsWithDS(t *testing.T, ds fleet.Datastore, opts ...*TestServ
 					commander: apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPusher),
 					logger:    kitlog.NewNopLogger(),
 				},
+				&MDMAppleDDMService{
+					ds:     ds,
+					logger: logger,
+				},
 			)
 			require.NoError(t, err)
 		}
 	}
 
-	apiHandler := MakeHandler(svc, cfg, logger, limitStore, WithLoginRateLimit(throttled.PerMin(100)))
+	apiHandler := MakeHandler(svc, cfg, logger, limitStore, WithLoginRateLimit(throttled.PerMin(1000)))
 	rootMux.Handle("/api/", apiHandler)
 
 	server := httptest.NewUnstartedServer(rootMux)
@@ -568,7 +590,7 @@ func mockSuccessfulPush(pushes []*mdm.Push) (map[string]*push.Response, error) {
 	return res, nil
 }
 
-func mdmAppleConfigurationRequiredEndpoints() []struct {
+func mdmConfigurationRequiredEndpoints() []struct {
 	method, path        string
 	deviceAuthenticated bool
 	premiumOnly         bool
@@ -589,27 +611,454 @@ func mdmAppleConfigurationRequiredEndpoints() []struct {
 		{"GET", "/api/latest/fleet/mdm/apple/profiles/1", false, false},
 		{"DELETE", "/api/latest/fleet/mdm/apple/profiles/1", false, false},
 		{"GET", "/api/latest/fleet/mdm/apple/profiles/summary", false, false},
+		{"GET", "/api/latest/fleet/mdm/profiles/summary", false, false},
+		{"GET", "/api/latest/fleet/configuration_profiles/summary", false, false},
 		{"PATCH", "/api/latest/fleet/mdm/hosts/1/unenroll", false, false},
+		{"DELETE", "/api/latest/fleet/hosts/1/mdm", false, false},
 		{"GET", "/api/latest/fleet/mdm/hosts/1/encryption_key", false, false},
+		{"GET", "/api/latest/fleet/hosts/1/encryption_key", false, false},
+		{"GET", "/api/latest/fleet/mdm/hosts/1/profiles", false, true},
+		{"GET", "/api/latest/fleet/hosts/1/configuration_profiles", false, true},
 		{"POST", "/api/latest/fleet/mdm/hosts/1/lock", false, false},
 		{"POST", "/api/latest/fleet/mdm/hosts/1/wipe", false, false},
 		{"PATCH", "/api/latest/fleet/mdm/apple/settings", false, false},
+		{"POST", "/api/latest/fleet/disk_encryption", false, false},
 		{"GET", "/api/latest/fleet/mdm/apple", false, false},
+		{"GET", "/api/latest/fleet/apns", false, false},
 		{"GET", apple_mdm.EnrollPath + "?token=test", false, false},
 		{"GET", apple_mdm.InstallerPath + "?token=test", false, false},
-		{"GET", "/api/latest/fleet/mdm/apple/setup/eula/token", false, false},
+		{"GET", "/api/latest/fleet/mdm/setup/eula/0982A979-B1C9-4BDF-B584-5A37D32A1172", false, true},
+		{"GET", "/api/latest/fleet/setup_experience/eula/0982A979-B1C9-4BDF-B584-5A37D32A1172", false, true},
+		{"DELETE", "/api/latest/fleet/mdm/setup/eula/token", false, true},
+		{"DELETE", "/api/latest/fleet/setup_experience/eula/token", false, true},
+		{"GET", "/api/latest/fleet/mdm/setup/eula/metadata", false, true},
+		{"GET", "/api/latest/fleet/setup_experience/eula/metadata", false, true},
+		{"GET", "/api/latest/fleet/mdm/apple/setup/eula/0982A979-B1C9-4BDF-B584-5A37D32A1172", false, false},
 		{"DELETE", "/api/latest/fleet/mdm/apple/setup/eula/token", false, false},
 		{"GET", "/api/latest/fleet/mdm/apple/setup/eula/metadata", false, false},
-		// TODO: this endpoint accepts multipart/form data that gets
-		// parsed before the MDM check, we need to refactor this
-		// function to return more information to the caller, or find a
-		// better way to test these endpoints.
-		// {"POST", "/api/latest/fleet/mdm/apple/setup/eula"},
 		{"GET", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"GET", "/api/latest/fleet/enrollment_profiles/automatic", false, false},
 		{"POST", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"POST", "/api/latest/fleet/enrollment_profiles/automatic", false, false},
 		{"DELETE", "/api/latest/fleet/mdm/apple/enrollment_profile", false, false},
+		{"DELETE", "/api/latest/fleet/enrollment_profiles/automatic", false, false},
 		{"POST", "/api/latest/fleet/device/%s/migrate_mdm", true, true},
 		{"POST", "/api/latest/fleet/mdm/apple/profiles/preassign", false, true},
 		{"POST", "/api/latest/fleet/mdm/apple/profiles/match", false, true},
+		{"POST", "/api/latest/fleet/mdm/commands/run", false, false},
+		{"POST", "/api/latest/fleet/commands/run", false, false},
+		{"GET", "/api/latest/fleet/mdm/commandresults", false, false},
+		{"GET", "/api/latest/fleet/commands/results", false, false},
+		{"GET", "/api/latest/fleet/mdm/commands", false, false},
+		{"GET", "/api/latest/fleet/commands", false, false},
+		{"POST", "/api/fleet/orbit/disk_encryption_key", false, false},
+		{"GET", "/api/latest/fleet/mdm/disk_encryption/summary", false, true},
+		{"GET", "/api/latest/fleet/disk_encryption", false, true},
+		{"GET", "/api/latest/fleet/mdm/profiles/1", false, false},
+		{"GET", "/api/latest/fleet/configuration_profiles/1", false, false},
+		{"DELETE", "/api/latest/fleet/mdm/profiles/1", false, false},
+		{"DELETE", "/api/latest/fleet/configuration_profiles/1", false, false},
+		// TODO: those endpoints accept multipart/form data that gets
+		// parsed before the MDM check, we need to refactor this
+		// function to return more information to the caller, or find a
+		// better way to test these endpoints.
+		//{"POST", "/api/latest/fleet/mdm/profiles", false, false},
+		//{"POST", "/api/latest/fleet/configuration_profiles", false, false},
+		//{"POST", "/api/latest/fleet/mdm/setup/eula"},
+		//{"POST", "/api/latest/fleet/setup_experience/eula"},
+		//{"POST", "/api/latest/fleet/mdm/bootstrap", false, true},
+		//{"POST", "/api/latest/fleet/bootstrap", false, true},
+		{"GET", "/api/latest/fleet/mdm/profiles", false, false},
+		{"GET", "/api/latest/fleet/configuration_profiles", false, false},
+		{"GET", "/api/latest/fleet/mdm/manual_enrollment_profile", false, true},
+		{"GET", "/api/latest/fleet/enrollment_profiles/manual", false, true},
+		{"GET", "/api/latest/fleet/mdm/bootstrap/1/metadata", false, true},
+		{"GET", "/api/latest/fleet/bootstrap/1/metadata", false, true},
+		{"DELETE", "/api/latest/fleet/mdm/bootstrap/1", false, true},
+		{"DELETE", "/api/latest/fleet/bootstrap/1", false, true},
+		{"GET", "/api/latest/fleet/mdm/bootstrap?token=1", false, true},
+		{"GET", "/api/latest/fleet/bootstrap?token=1", false, true},
+		{"GET", "/api/latest/fleet/mdm/bootstrap/summary", false, true},
+		{"GET", "/api/latest/fleet/mdm/apple/bootstrap/summary", false, true},
+		{"GET", "/api/latest/fleet/bootstrap/summary", false, true},
+		{"PATCH", "/api/latest/fleet/mdm/apple/setup", false, true},
+		{"PATCH", "/api/latest/fleet/setup_experience", false, true},
+	}
+}
+
+// getURLSchemas returns a list of all valid URI schemas
+func getURISchemas() []string {
+	return []string{
+		"aaa",
+		"aaas",
+		"about",
+		"acap",
+		"acct",
+		"acd",
+		"acr",
+		"adiumxtra",
+		"adt",
+		"afp",
+		"afs",
+		"aim",
+		"amss",
+		"android",
+		"appdata",
+		"apt",
+		"ar",
+		"ark",
+		"at",
+		"attachment",
+		"aw",
+		"barion",
+		"bb",
+		"beshare",
+		"bitcoin",
+		"bitcoincash",
+		"blob",
+		"bolo",
+		"browserext",
+		"cabal",
+		"calculator",
+		"callto",
+		"cap",
+		"cast",
+		"casts",
+		"chrome",
+		"chrome-extension",
+		"cid",
+		"coap",
+		"coap+tcp",
+		"coap+ws",
+		"coaps",
+		"coaps+tcp",
+		"coaps+ws",
+		"com-eventbrite-attendee",
+		"content",
+		"content-type",
+		"crid",
+		"cstr",
+		"cvs",
+		"dab",
+		"dat",
+		"data",
+		"dav",
+		"dhttp",
+		"diaspora",
+		"dict",
+		"did",
+		"dis",
+		"dlna-playcontainer",
+		"dlna-playsingle",
+		"dns",
+		"dntp",
+		"doi",
+		"dpp",
+		"drm",
+		"drop",
+		"dtmi",
+		"dtn",
+		"dvb",
+		"dvx",
+		"dweb",
+		"ed2k",
+		"eid",
+		"elsi",
+		"embedded",
+		"ens",
+		"ethereum",
+		"example",
+		"facetime",
+		"fax",
+		"feed",
+		"feedready",
+		"fido",
+		"file",
+		"filesystem",
+		"finger",
+		"first-run-pen-experience",
+		"fish",
+		"fm",
+		"ftp",
+		"fuchsia-pkg",
+		"geo",
+		"gg",
+		"git",
+		"gitoid",
+		"gizmoproject",
+		"go",
+		"gopher",
+		"graph",
+		"grd",
+		"gtalk",
+		"h323",
+		"ham",
+		"hcap",
+		"hcp",
+		"http",
+		"https",
+		"hxxp",
+		"hxxps",
+		"hydrazone",
+		"hyper",
+		"iax",
+		"icap",
+		"icon",
+		"im",
+		"imap",
+		"info",
+		"iotdisco",
+		"ipfs",
+		"ipn",
+		"ipns",
+		"ipp",
+		"ipps",
+		"irc",
+		"irc6",
+		"ircs",
+		"iris",
+		"iris.beep",
+		"iris.lwz",
+		"iris.xpc",
+		"iris.xpcs",
+		"isostore",
+		"itms",
+		"jabber",
+		"jar",
+		"jms",
+		"keyparc",
+		"lastfm",
+		"lbry",
+		"ldap",
+		"ldaps",
+		"leaptofrogans",
+		"lorawan",
+		"lpa",
+		"lvlt",
+		"magnet",
+		"mailserver",
+		"mailto",
+		"maps",
+		"market",
+		"matrix",
+		"message",
+		"microsoft.windows.camera",
+		"microsoft.windows.camera.multipicker",
+		"microsoft.windows.camera.picker",
+		"mid",
+		"mms",
+		"modem",
+		"mongodb",
+		"moz",
+		"ms-access",
+		"ms-appinstaller",
+		"ms-browser-extension",
+		"ms-calculator",
+		"ms-drive-to",
+		"ms-enrollment",
+		"ms-excel",
+		"ms-eyecontrolspeech",
+		"ms-gamebarservices",
+		"ms-gamingoverlay",
+		"ms-getoffice",
+		"ms-help",
+		"ms-infopath",
+		"ms-inputapp",
+		"ms-launchremotedesktop",
+		"ms-lockscreencomponent-config",
+		"ms-media-stream-id",
+		"ms-meetnow",
+		"ms-mixedrealitycapture",
+		"ms-mobileplans",
+		"ms-newsandinterests",
+		"ms-officeapp",
+		"ms-people",
+		"ms-project",
+		"ms-powerpoint",
+		"ms-publisher",
+		"ms-remotedesktop",
+		"ms-remotedesktop-launch",
+		"ms-restoretabcompanion",
+		"ms-screenclip",
+		"ms-screensketch",
+		"ms-search",
+		"ms-search-repair",
+		"ms-secondary-screen-controller",
+		"ms-secondary-screen-setup",
+		"ms-settings",
+		"ms-settings-airplanemode",
+		"ms-settings-bluetooth",
+		"ms-settings-camera",
+		"ms-settings-cellular",
+		"ms-settings-cloudstorage",
+		"ms-settings-connectabledevices",
+		"ms-settings-displays-topology",
+		"ms-settings-emailandaccounts",
+		"ms-settings-language",
+		"ms-settings-location",
+		"ms-settings-lock",
+		"ms-settings-nfctransactions",
+		"ms-settings-notifications",
+		"ms-settings-power",
+		"ms-settings-privacy",
+		"ms-settings-proximity",
+		"ms-settings-screenrotation",
+		"ms-settings-wifi",
+		"ms-settings-workplace",
+		"ms-spd",
+		"ms-stickers",
+		"ms-sttoverlay",
+		"ms-transit-to",
+		"ms-useractivityset",
+		"ms-virtualtouchpad",
+		"ms-visio",
+		"ms-walk-to",
+		"ms-whiteboard",
+		"ms-whiteboard-cmd",
+		"ms-word",
+		"msnim",
+		"msrp",
+		"msrps",
+		"mss",
+		"mt",
+		"mtqp",
+		"mumble",
+		"mupdate",
+		"mvn",
+		"news",
+		"nfs",
+		"ni",
+		"nih",
+		"nntp",
+		"notes",
+		"num",
+		"ocf",
+		"oid",
+		"onenote",
+		"onenote-cmd",
+		"opaquelocktoken",
+		"openpgp4fpr",
+		"otpauth",
+		"p1",
+		"pack",
+		"palm",
+		"paparazzi",
+		"payment",
+		"payto",
+		"pkcs11",
+		"platform",
+		"pop",
+		"pres",
+		"prospero",
+		"proxy",
+		"pwid",
+		"psyc",
+		"pttp",
+		"qb",
+		"query",
+		"quic-transport",
+		"redis",
+		"rediss",
+		"reload",
+		"res",
+		"resource",
+		"rmi",
+		"rsync",
+		"rtmfp",
+		"rtmp",
+		"rtsp",
+		"rtsps",
+		"rtspu",
+		"sarif",
+		"secondlife",
+		"secret-token",
+		"service",
+		"session",
+		"sftp",
+		"sgn",
+		"shc",
+		"shttp",
+		"sieve",
+		"simpleledger",
+		"simplex",
+		"sip",
+		"sips",
+		"skype",
+		"smb",
+		"smp",
+		"sms",
+		"smtp",
+		"snews",
+		"snmp",
+		"soap.beep",
+		"soap.beeps",
+		"soldat",
+		"spiffe",
+		"spotify",
+		"ssb",
+		"ssh",
+		"starknet",
+		"steam",
+		"stun",
+		"stuns",
+		"submit",
+		"svn",
+		"swh",
+		"swid",
+		"swidpath",
+		"tag",
+		"taler",
+		"teamspeak",
+		"tel",
+		"teliaeid",
+		"telnet",
+		"tftp",
+		"things",
+		"thismessage",
+		"tip",
+		"tn3270",
+		"tool",
+		"turn",
+		"turns",
+		"tv",
+		"udp",
+		"unreal",
+		"upt",
+		"urn",
+		"ut2004",
+		"uuid-in-package",
+		"v-event",
+		"vemmi",
+		"ventrilo",
+		"ves",
+		"videotex",
+		"vnc",
+		"view-source",
+		"vscode",
+		"vscode-insiders",
+		"vsls",
+		"w3",
+		"wais",
+		"web3",
+		"wcr",
+		"webcal",
+		"web+ap",
+		"wifi",
+		"wpid",
+		"ws",
+		"wss",
+		"wtai",
+		"wyciwyg",
+		"xcon",
+		"xcon-userid",
+		"xfire",
+		"xmlrpc.beep",
+		"xmlrpc.beeps",
+		"xmpp",
+		"xri",
+		"ymsgr",
+		"z39.50",
+		"z39.50r",
+		"z39.50s",
 	}
 }

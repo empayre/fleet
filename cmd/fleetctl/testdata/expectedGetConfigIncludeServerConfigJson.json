@@ -5,13 +5,16 @@
 		"org_info": {
 			"org_name": "",
 			"org_logo_url": "",
+			"org_logo_url_light_background": "",
 			"contact_url": "https://fleetdm.com/company/contact"
 		},
 		"server_settings": {
 			"server_url": "",
 			"live_query_disabled": false,
+			"query_reports_disabled": false,
 			"enable_analytics": false,
-			"deferred_save_host": false
+			"deferred_save_host": false,
+			"scripts_disabled": false
 		},
 		"smtp_settings": {
 			"enable_smtp": false,
@@ -41,9 +44,15 @@
 			"apple_bm_terms_expired": false,
 			"apple_bm_enabled_and_configured": false,
 			"enabled_and_configured": false,
+			"windows_enabled_and_configured": false,
+			"enable_disk_encryption": false,
 			"macos_updates": {
 				"minimum_version": null,
 				"deadline": null
+			},
+			"windows_updates": {
+				"deadline_days": 7,
+				"grace_period_days": 3
 			},
 			"macos_migration": {
 				"enable": false,
@@ -51,13 +60,16 @@
 				"webhook_url": ""
 			},
 			"macos_settings": {
-				"custom_settings": null,
-				"enable_disk_encryption": false
+				"custom_settings": null
 			},
 			"macos_setup": {
 				"bootstrap_package": null,
 				"enable_end_user_authentication": false,
-				"macos_setup_assistant": null
+				"macos_setup_assistant": null,
+				"enable_release_device_manually": false
+			},
+			"windows_settings": {
+				"custom_settings": null
 			},
 			"end_user_authentication": {
 				"entity_id": "",
@@ -67,6 +79,7 @@
 				"idp_name": ""
 			}
 		},
+		"scripts": null,
 		"sso_settings": {
 			"enable_jit_provisioning": false,
 			"enable_jit_role_sync": false,
@@ -107,7 +120,8 @@
 		},
 		"integrations": {
 			"jira": null,
-			"zendesk": null
+			"zendesk": null,
+			"google_calendar": null
 		},
 		"update_interval": {
 			"osquery_detail": "1h0m0s",

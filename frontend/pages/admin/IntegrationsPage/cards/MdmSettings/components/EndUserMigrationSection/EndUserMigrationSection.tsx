@@ -12,6 +12,7 @@ import InputField from "components/forms/fields/InputField";
 import Radio from "components/forms/fields/Radio/Radio";
 import Slider from "components/forms/fields/Slider/Slider";
 import Button from "components/buttons/Button/Button";
+import SectionHeader from "components/SectionHeader";
 import validateUrl from "components/forms/validators/valid_url";
 import PremiumFeatureMessage from "components/PremiumFeatureMessage/PremiumFeatureMessage";
 import EmptyTable from "components/EmptyTable/EmptyTable";
@@ -23,9 +24,9 @@ import MdmMigrationPreview from "../../../../../../../../assets/images/mdm-migra
 const baseClass = "end-user-migration-section";
 
 const VOLUNTARY_MODE_DESCRIPTION =
-  "The end user sees the above window when they select Migrate to Fleet in the Fleet Desktop menu. If they’re unenrolled from your old MDM, the window appears every 15 minutes.";
+  "The end user sees the above window when they select Migrate to Fleet in the Fleet Desktop menu. If they’re unenrolled from your old MDM, the window appears every 15-20 minutes.";
 const FORCED_MODE_DESCRIPTION =
-  "The end user sees the above window every 15 minutes.";
+  "The end user sees the above window every 15-20 minutes.";
 
 interface IEndUserMigrationFormData {
   isEnabled: boolean;
@@ -115,7 +116,7 @@ const EndUserMigrationSection = ({ router }: IEndUserMigrationSectionProps) => {
   if (!isPremiumTier) {
     return (
       <div className={baseClass}>
-        <h2>End user migration workflow</h2>
+        <SectionHeader title="End user migration workflow" />
         <PremiumFeatureMessage />
       </div>
     );
@@ -124,12 +125,16 @@ const EndUserMigrationSection = ({ router }: IEndUserMigrationSectionProps) => {
   if (!config?.mdm.apple_bm_enabled_and_configured) {
     return (
       <div className={baseClass}>
-        <h2>End user migration workflow</h2>
+        <SectionHeader title="End user migration workflow" />
         <EmptyTable
           className={`${baseClass}__abm-connect-message`}
           header="Migration workflow for macOS hosts"
           info="Connect to Apple Business Manager to get started."
-          primaryButton={<Button onClick={onClickConnect}>Connect</Button>}
+          primaryButton={
+            <Button variant="brand" onClick={onClickConnect}>
+              Connect
+            </Button>
+          }
         />
       </div>
     );
@@ -137,28 +142,28 @@ const EndUserMigrationSection = ({ router }: IEndUserMigrationSectionProps) => {
 
   return (
     <div className={baseClass}>
-      <h2>End user migration workflow</h2>
-      <p>
-        Control the end user migration workflow for hosts that automatically
-        enrolled to your old MDM solution.
-      </p>
-
-      <img
-        src={MdmMigrationPreview}
-        alt="end user migration preview"
-        className={`${baseClass}__migration-preview`}
-      />
+      <SectionHeader title="End user migration workflow" />
       <form>
+        <p>
+          Control the end user migration workflow for macOS hosts that
+          automatically enrolled to your old MDM solution.
+        </p>
+
+        <img
+          src={MdmMigrationPreview}
+          alt="end user migration preview"
+          className={`${baseClass}__migration-preview`}
+        />
         <Slider
           value={formData.isEnabled}
           onChange={toggleMigrationEnabled}
           activeText="Enabled"
-          inactiveText="Diabled"
+          inactiveText="Disabled"
           className={`${baseClass}__enabled-slider`}
         />
-        <div className={formClasses}>
-          <div className={`${baseClass}__mode-field`}>
-            <span>Mode</span>
+        <div className={`form ${formClasses}`}>
+          <div className={`form-field ${baseClass}__mode-field`}>
+            <div className="form-field__label">Mode</div>
             <Radio
               disabled={!formData.isEnabled}
               checked={formData.mode === "voluntary"}
@@ -177,18 +182,17 @@ const EndUserMigrationSection = ({ router }: IEndUserMigrationSectionProps) => {
               onChange={onChangeMode}
               className={`${baseClass}__forced-radio`}
             />
-            <p>
-              {formData.mode === "voluntary"
-                ? VOLUNTARY_MODE_DESCRIPTION
-                : FORCED_MODE_DESCRIPTION}
-            </p>
-            <p>
-              To edit the organization name, avatar (logo), and contact link,
-              head to the <b>Organization settings</b> &gt;{" "}
-              <b>Organization info</b> page.
-            </p>
           </div>
-
+          <p>
+            {formData.mode === "voluntary"
+              ? VOLUNTARY_MODE_DESCRIPTION
+              : FORCED_MODE_DESCRIPTION}
+          </p>
+          <p>
+            To edit the organization name, avatar (logo), and contact link, head
+            to the <b>Organization settings</b> &gt; <b>Organization info</b>{" "}
+            page.
+          </p>
           <InputField
             disabled={!formData.isEnabled}
             name="webhook_url"
@@ -196,7 +200,7 @@ const EndUserMigrationSection = ({ router }: IEndUserMigrationSectionProps) => {
             value={formData.webhookUrl}
             onChange={onChangeWebhookUrl}
             error={!isValidWebhookUrl && "Must be a valid URL."}
-            hint={
+            helpText={
               <>
                 When the end users clicks <b>Start</b>, a JSON payload is sent
                 to this URL if the end user is enrolled to your old MDM. Receive

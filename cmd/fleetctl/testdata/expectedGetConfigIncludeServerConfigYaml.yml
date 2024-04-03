@@ -11,6 +11,7 @@ spec:
     enable_host_users: true
     enable_software_inventory: false
   integrations:
+    google_calendar: null
     jira: null
     zendesk: null
   mdm:
@@ -18,6 +19,8 @@ spec:
     apple_bm_enabled_and_configured: false
     apple_bm_terms_expired: false
     enabled_and_configured: false
+    windows_enabled_and_configured: false
+    enable_disk_encryption: false
     macos_migration:
       enable: false
       mode: ""
@@ -25,19 +28,25 @@ spec:
     macos_updates:
       minimum_version: null
       deadline: null
+    windows_updates:
+      deadline_days: 7
+      grace_period_days: 3
     macos_settings:
       custom_settings:
-      enable_disk_encryption: false
     macos_setup:
       bootstrap_package:
       enable_end_user_authentication: false
+      enable_release_device_manually: false
       macos_setup_assistant:
+    windows_settings:
+      custom_settings:
     end_user_authentication:
       idp_name: ""
       issuer_uri: ""
       metadata: ""
       metadata_url: ""
       entity_id: ""
+  scripts: null
   license:
     expiration: "0001-01-01T00:00:00Z"
     tier: free
@@ -79,13 +88,16 @@ spec:
       plugin: filesystem
   org_info:
     org_logo_url: ""
+    org_logo_url_light_background: ""
     org_name: ""
     contact_url: https://fleetdm.com/company/contact
   server_settings:
     deferred_save_host: false
     enable_analytics: false
     live_query_disabled: false
+    query_reports_disabled: false
     server_url: ""
+    scripts_disabled: false
   smtp_settings:
     authentication_method: ""
     authentication_type: ""

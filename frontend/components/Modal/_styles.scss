@@ -9,6 +9,13 @@
     animation: fade-in 150ms ease-out;
   }
 
+  &__hidden {
+    visibility: hidden;
+    .fleet-checkbox__tick:after {
+      visibility: hidden;
+    }
+  }
+
   &__content {
     margin-top: $pad-large;
     font-size: $x-small;
@@ -23,28 +30,36 @@
       }
     }
 
+    form .modal-cta-wrap,
+    .form .modal-cta-wrap {
+      // compensate for form gap to maintain consistent 32px spacing on top of modal ctas
+      margin-top: $pad-small;
+    }
+
     .modal-cta-wrap {
+      align-self: flex-end;
       display: flex;
       flex-direction: row-reverse;
-      margin-top: $pad-large;
+      margin-top: $pad-xlarge;
       gap: $pad-medium;
     }
   }
 
   &__ex {
     text-decoration: none;
-    padding-left: $pad-xsmall;
 
-    .button::after {
-      content: url("../assets/images/icon-close-fleet-blue-16x16@2x.png");
-      transform: scale(0.5);
-      border-radius: 0px;
+    &:hover {
+      .icon {
+        svg {
+          path {
+            stroke: $core-vibrant-blue;
+          }
+        }
+      }
     }
 
-    .button:hover::after {
-      content: url("../assets/images/icon-close-vibrant-blue-16x16@2x.png");
-      transform: scale(0.5);
-      border-radius: 0px;
+    .button {
+      padding: $pad-small;
     }
   }
 

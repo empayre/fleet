@@ -13,9 +13,12 @@ variable "fleet_config" {
   type = object({
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
-    image                        = optional(string, "fleetdm/fleet:v4.31.1")
+    image                        = optional(string, "fleetdm/fleet:v4.48.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
+    depends_on                   = optional(list(any), [])
+    mount_points                 = optional(list(any), [])
+    volumes                      = optional(list(any), [])
     extra_environment_variables  = optional(map(string), {})
     extra_iam_policies           = optional(list(string), [])
     extra_execution_iam_policies = optional(list(string), [])
@@ -54,6 +57,7 @@ variable "fleet_config" {
     loadbalancer = object({
       arn = string
     })
+    extra_load_balancers = optional(list(any), [])
     networking = object({
       subnets         = list(string)
       security_groups = optional(list(string), null)
@@ -94,6 +98,9 @@ variable "fleet_config" {
     image                        = "fleetdm/fleet:v4.31.1"
     family                       = "fleet"
     sidecars                     = []
+    depends_on                   = []
+    mount_points                 = []
+    volumes                      = []
     extra_environment_variables  = {}
     extra_iam_policies           = []
     extra_execution_iam_policies = []
@@ -125,6 +132,7 @@ variable "fleet_config" {
     loadbalancer = {
       arn = null
     }
+    extra_load_balacners = []
     networking = {
       subnets         = null
       security_groups = null

@@ -8,7 +8,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -24,6 +23,7 @@ import (
 	"github.com/fleetdm/fleet/v4/ee/server/licensing"
 	eeservice "github.com/fleetdm/fleet/v4/ee/server/service"
 	"github.com/fleetdm/fleet/v4/pkg/certificate"
+	"github.com/fleetdm/fleet/v4/pkg/scripts"
 	"github.com/fleetdm/fleet/v4/server"
 	configpkg "github.com/fleetdm/fleet/v4/server/config"
 	"github.com/fleetdm/fleet/v4/server/contexts/ctxerr"
@@ -41,28 +41,29 @@ import (
 	"github.com/fleetdm/fleet/v4/server/logging"
 	"github.com/fleetdm/fleet/v4/server/mail"
 	apple_mdm "github.com/fleetdm/fleet/v4/server/mdm/apple"
+	microsoft_mdm "github.com/fleetdm/fleet/v4/server/mdm/microsoft"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/cryptoutil"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/push"
+	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/push/buford"
+	nanomdm_pushsvc "github.com/fleetdm/fleet/v4/server/mdm/nanomdm/push/service"
+	scep_depot "github.com/fleetdm/fleet/v4/server/mdm/scep/depot"
 	"github.com/fleetdm/fleet/v4/server/pubsub"
 	"github.com/fleetdm/fleet/v4/server/service"
 	"github.com/fleetdm/fleet/v4/server/service/async"
 	"github.com/fleetdm/fleet/v4/server/service/redis_policy_set"
 	"github.com/fleetdm/fleet/v4/server/sso"
+	"github.com/fleetdm/fleet/v4/server/version"
 	"github.com/getsentry/sentry-go"
 	kitlog "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	kitprometheus "github.com/go-kit/kit/metrics/prometheus"
 	"github.com/go-kit/log"
-	"github.com/kolide/kit/version"
-	"github.com/micromdm/nanomdm/cryptoutil"
-	"github.com/micromdm/nanomdm/push"
-	"github.com/micromdm/nanomdm/push/buford"
-	nanomdm_pushsvc "github.com/micromdm/nanomdm/push/service"
-	scep_depot "github.com/micromdm/scep/v2/depot"
 	"github.com/ngrok/sqlmw"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
-	_ "go.elastic.co/apm/module/apmsql"
-	_ "go.elastic.co/apm/module/apmsql/mysql"
+	_ "go.elastic.co/apm/module/apmsql/v2"
+	_ "go.elastic.co/apm/module/apmsql/v2/mysql"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -233,7 +234,7 @@ the way that the Fleet server works.
 					"#\n"+
 					"#   To run the server without performing migrations:\n"+
 					"#     - Set environment variable FLEET_UPGRADES_ALLOW_MISSING_MIGRATIONS=1, or,\n"+
-					"#     - Set config updates.allow_mising_migrations to true, or,\n"+
+					"#     - Set config updates.allow_missing_migrations to true, or,\n"+
 					"#     - Use command line argument --upgrades_allow_missing_migrations=true\n"+
 					"################################################################################\n",
 					migrationStatus.MissingTable, migrationStatus.MissingData, os.Args[0])
@@ -461,6 +462,7 @@ the way that the Fleet server works.
 				mdmStorage                  *mysql.NanoMDMStorage
 				mdmPushService              push.Pusher
 				mdmCheckinAndCommandService *service.MDMAppleCheckinAndCommandService
+				ddmService                  *service.MDMAppleDDMService
 				mdmPushCertTopic            string
 			)
 
@@ -545,7 +547,25 @@ the way that the Fleet server works.
 				}
 				commander := apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService)
 				mdmCheckinAndCommandService = service.NewMDMAppleCheckinAndCommandService(ds, commander, logger)
+				ddmService = service.NewMDMAppleDDMService(ds, logger)
 				appCfg.MDM.EnabledAndConfigured = true
+			}
+
+			// register the Microsoft MDM services
+			var (
+				wstepCertManager microsoft_mdm.CertManager
+			)
+
+			// Configuring WSTEP certs
+			if config.MDM.IsMicrosoftWSTEPSet() {
+				_, crtPEM, keyPEM, err := config.MDM.MicrosoftWSTEP()
+				if err != nil {
+					initFatal(err, "validate Microsoft WSTEP certificate and key")
+				}
+				wstepCertManager, err = microsoft_mdm.NewCertManager(ds, crtPEM, keyPEM)
+				if err != nil {
+					initFatal(err, "initialize mdm microsoft wstep depot")
+				}
 			}
 
 			// save the app config with the updated MDM.Enabled value
@@ -599,6 +619,7 @@ the way that the Fleet server works.
 				mdmPushService,
 				mdmPushCertTopic,
 				cronSchedules,
+				wstepCertManager,
 			)
 			if err != nil {
 				initFatal(err, "initializing service")
@@ -661,9 +682,27 @@ the way that the Fleet server works.
 				}
 			}()
 
-			if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
-				return newCleanupsAndAggregationSchedule(ctx, instanceID, ds, logger, redisWrapperDS, &config)
-			}); err != nil {
+			if config.Server.FrequentCleanupsEnabled {
+				if err := cronSchedules.StartCronSchedule(
+					func() (fleet.CronSchedule, error) {
+						return newFrequentCleanupsSchedule(ctx, instanceID, ds, liveQueryStore, logger)
+					},
+				); err != nil {
+					initFatal(err, "failed to register frequent_cleanups schedule")
+				}
+			}
+
+			if err := cronSchedules.StartCronSchedule(
+				func() (fleet.CronSchedule, error) {
+					var commander *apple_mdm.MDMAppleCommander
+					if appCfg.MDM.EnabledAndConfigured {
+						commander = apple_mdm.NewMDMAppleCommander(mdmStorage, mdmPushService)
+					}
+					return newCleanupsAndAggregationSchedule(
+						ctx, instanceID, ds, logger, redisWrapperDS, &config, commander,
+					)
+				},
+			); err != nil {
 				initFatal(err, "failed to register cleanups_then_aggregations schedule")
 			}
 
@@ -708,9 +747,9 @@ the way that the Fleet server works.
 				}
 			}
 
-			if appCfg.MDM.EnabledAndConfigured {
+			if appCfg.MDM.EnabledAndConfigured || appCfg.MDM.WindowsEnabledAndConfigured {
 				if err := cronSchedules.StartCronSchedule(func() (fleet.CronSchedule, error) {
-					return newMDMAppleProfileManager(
+					return newMDMProfileManager(
 						ctx,
 						instanceID,
 						ds,
@@ -728,6 +767,18 @@ the way that the Fleet server works.
 					return newActivitiesStreamingSchedule(ctx, instanceID, ds, logger, auditLogger)
 				}); err != nil {
 					initFatal(err, "failed to register activities streaming schedule")
+				}
+			}
+
+			if license.IsPremium() {
+				if err := cronSchedules.StartCronSchedule(
+					func() (fleet.CronSchedule, error) {
+						return newCalendarSchedule(
+							ctx, instanceID, ds, logger,
+						)
+					},
+				); err != nil {
+					initFatal(err, "failed to register calendar schedule")
 				}
 			}
 
@@ -833,6 +884,7 @@ the way that the Fleet server works.
 					scepStorage,
 					logger,
 					mdmCheckinAndCommandService,
+					ddmService,
 				); err != nil {
 					initFatal(err, "setup mdm apple services")
 				}
@@ -853,7 +905,26 @@ the way that the Fleet server works.
 				}
 			}
 
-			rootMux.Handle("/api/", apiHandler)
+			// We must wrap the Handler here to set special per-endpoint Write
+			// timeouts, so that we have access to the raw http.ResponseWriter.
+			// Otherwise, the handler is wrapped by the promhttp response delegator,
+			// which does not support the Unwrap call needed to work with
+			// ResponseController.
+			//
+			// See https://pkg.go.dev/net/http#NewResponseController which explains
+			// the Unwrap method that the prometheus wrapper of http.ResponseWriter
+			// does not implement.
+			rootMux.HandleFunc("/api/", func(rw http.ResponseWriter, req *http.Request) {
+				if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/fleet/scripts/run/sync") {
+					rc := http.NewResponseController(rw)
+					// add an additional 30 seconds to prevent race conditions where the
+					// request is terminated early.
+					if err := rc.SetWriteDeadline(time.Now().Add(scripts.MaxServerWaitTime + (30 * time.Second))); err != nil {
+						level.Error(logger).Log("msg", "http middleware failed to override endpoint write timeout", "err", err)
+					}
+				}
+				apiHandler.ServeHTTP(rw, req)
+			})
 			rootMux.Handle("/", frontendHandler)
 
 			debugHandler := &debugMux{
@@ -863,12 +934,12 @@ the way that the Fleet server works.
 
 			if path, ok := os.LookupEnv("FLEET_TEST_PAGE_PATH"); ok {
 				// test that we can load this
-				_, err := ioutil.ReadFile(path)
+				_, err := os.ReadFile(path)
 				if err != nil {
 					initFatal(err, "loading FLEET_TEST_PAGE_PATH")
 				}
 				rootMux.HandleFunc("/test", func(rw http.ResponseWriter, req *http.Request) {
-					testPage, err := ioutil.ReadFile(path)
+					testPage, err := os.ReadFile(path)
 					if err != nil {
 						rw.WriteHeader(http.StatusNotFound)
 						return

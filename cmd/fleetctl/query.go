@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -75,6 +75,10 @@ func queryCommand() *cli.Command {
 				Destination: &flTimeout,
 				Usage:       "How long to run query before exiting (10s, 1h, etc.)",
 			},
+			&cli.UintFlag{
+				Name:  teamFlagName,
+				Usage: "ID of the team where the named query belongs to (0 means global)",
+			},
 			configFlag(),
 			contextFlag(),
 			debugFlag(),
@@ -93,16 +97,31 @@ func queryCommand() *cli.Command {
 				return errors.New("--query and --query-name must not be provided together")
 			}
 
+			var queryID *uint
 			if flQueryName != "" {
-				q, err := fleet.GetQuery(flQueryName)
-				if err != nil {
+				var teamID *uint
+				if tid := c.Uint(teamFlagName); tid != 0 {
+					teamID = &tid
+				}
+				queries, err := fleet.GetQueries(teamID, &flQueryName)
+				if err != nil || len(queries) == 0 {
 					return fmt.Errorf("Query '%s' not found", flQueryName)
 				}
-				flQuery = q.Query
-			}
-
-			if flQuery == "" {
-				return errors.New("Query must be specified with --query or --query-name")
+				// For backwards compatibility with older fleet server, we explicitly find the query in the result array
+				for _, query := range queries {
+					if query.Name == flQueryName {
+						id := query.ID // making an explicit copy of ID
+						queryID = &id
+						break
+					}
+				}
+				if queryID == nil {
+					return fmt.Errorf("Query '%s' not found", flQueryName)
+				}
+			} else {
+				if flQuery == "" {
+					return errors.New("Query must be specified with --query or --query-name")
+				}
 			}
 
 			var output outputWriter
@@ -115,7 +134,7 @@ func queryCommand() *cli.Command {
 			hosts := strings.Split(flHosts, ",")
 			labels := strings.Split(flLabels, ",")
 
-			res, err := fleet.LiveQuery(flQuery, labels, hosts)
+			res, err := fleet.LiveQuery(flQuery, queryID, labels, hosts)
 			if err != nil {
 				return err
 			}
@@ -128,7 +147,7 @@ func queryCommand() *cli.Command {
 			s := spinner.New(spinner.CharSets[24], 200*time.Millisecond)
 			s.Writer = os.Stderr
 			if flQuiet {
-				s.Writer = ioutil.Discard
+				s.Writer = io.Discard
 			}
 			s.Start()
 

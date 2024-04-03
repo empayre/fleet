@@ -215,9 +215,12 @@ variable "fleet_config" {
   type = object({
     mem                          = optional(number, 4096)
     cpu                          = optional(number, 512)
-    image                        = optional(string, "fleetdm/fleet:v4.31.1")
+    image                        = optional(string, "fleetdm/fleet:v4.48.0")
     family                       = optional(string, "fleet")
     sidecars                     = optional(list(any), [])
+    depends_on                   = optional(list(any), [])
+    mount_points                 = optional(list(any), [])
+    volumes                      = optional(list(any), [])
     extra_environment_variables  = optional(map(string), {})
     extra_iam_policies           = optional(list(string), [])
     extra_execution_iam_policies = optional(list(string), [])
@@ -267,6 +270,7 @@ variable "fleet_config" {
       }), {
       arn = null
     })
+    extra_load_balancers = optional(list(any), [])
     networking = optional(object({
       subnets         = list(string)
       security_groups = optional(list(string), null)
@@ -310,6 +314,9 @@ variable "fleet_config" {
     image                        = "fleetdm/fleet:v4.31.1"
     family                       = "fleet"
     sidecars                     = []
+    depends_on                   = []
+    volumes                      = []
+    mount_points                 = []
     extra_environment_variables  = {}
     extra_iam_policies           = []
     extra_execution_iam_policies = []
@@ -341,6 +348,7 @@ variable "fleet_config" {
     loadbalancer = {
       arn = null
     }
+    extra_load_balancers = []
     networking = {
       subnets         = null
       security_groups = null
@@ -381,10 +389,17 @@ variable "migration_config" {
 
 variable "alb_config" {
   type = object({
-    name            = optional(string, "fleet")
-    security_groups = optional(list(string), [])
-    access_logs     = optional(map(string), {})
-    allowed_cidrs   = optional(list(string), ["0.0.0.0/0"])
+    name                 = optional(string, "fleet")
+    security_groups      = optional(list(string), [])
+    access_logs          = optional(map(string), {})
+    allowed_cidrs        = optional(list(string), ["0.0.0.0/0"])
+    allowed_ipv6_cidrs   = optional(list(string), ["::/0"])
+    egress_cidrs         = optional(list(string), ["0.0.0.0/0"])
+    egress_ipv6_cidrs    = optional(list(string), ["::/0"])
+    extra_target_groups  = optional(any, [])
+    https_listener_rules = optional(any, [])
+    tls_policy           = optional(string, "ELBSecurityPolicy-TLS-1-2-2017-01")
+    idle_timeout         = optional(number, 60)
   })
   default = {}
 }

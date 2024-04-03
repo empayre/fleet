@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -57,6 +58,26 @@ func (svc *Service) CreateUser(ctx context.Context, p fleet.UserPayload) (*fleet
 
 	if err := p.VerifyAdminCreate(); err != nil {
 		return nil, ctxerr.Wrap(ctx, err, "verify user payload")
+	}
+
+	if teams != nil {
+		// Validate that the teams exist
+		teamsSummary, err := svc.ds.TeamsSummary(ctx)
+		if err != nil {
+			return nil, ctxerr.Wrap(ctx, err, "fetching teams in attempt to verify team exists")
+		}
+		teamIDs := map[uint]struct{}{}
+		for _, team := range teamsSummary {
+			teamIDs[team.ID] = struct{}{}
+		}
+		for _, userTeam := range teams {
+			_, ok := teamIDs[userTeam.Team.ID]
+			if !ok {
+				return nil, ctxerr.Wrap(
+					ctx, fleet.NewInvalidArgumentError("teams.id", fmt.Sprintf("team with id %d does not exist", userTeam.Team.ID)),
+				)
+			}
+		}
 	}
 
 	if invite, err := svc.ds.InviteByEmail(ctx, *p.Email); err == nil && invite != nil {
@@ -832,9 +853,12 @@ func performRequiredPasswordResetEndpoint(ctx context.Context, request interface
 func (svc *Service) PerformRequiredPasswordReset(ctx context.Context, password string) (*fleet.User, error) {
 	vc, ok := viewer.FromContext(ctx)
 	if !ok {
-		return nil, fleet.ErrNoContext
+		// No user in the context -- authentication issue
+		svc.authz.SkipAuthorization(ctx)
+		return nil, authz.ForbiddenWithInternal("No user in the context", nil, nil, nil)
 	}
 	if !vc.CanPerformPasswordReset() {
+		svc.authz.SkipAuthorization(ctx)
 		return nil, fleet.NewPermissionError("cannot reset password")
 	}
 	user := vc.User
@@ -844,10 +868,16 @@ func (svc *Service) PerformRequiredPasswordReset(ctx context.Context, password s
 	}
 
 	if user.SSOEnabled {
-		return nil, ctxerr.New(ctx, "password reset for single sign on user not allowed")
+		// should never happen because this would get caught by the
+		// CanPerformPasswordReset check above
+		err := fleet.NewPermissionError("password reset for single sign on user not allowed")
+		return nil, ctxerr.Wrap(ctx, err)
 	}
 	if !user.IsAdminForcedPasswordReset() {
-		return nil, ctxerr.New(ctx, "user does not require password reset")
+		// should never happen because this would get caught by the
+		// CanPerformPasswordReset check above
+		err := fleet.NewPermissionError("cannot reset password")
+		return nil, ctxerr.Wrap(ctx, err)
 	}
 
 	// prevent setting the same password
@@ -856,7 +886,7 @@ func (svc *Service) PerformRequiredPasswordReset(ctx context.Context, password s
 	}
 
 	if err := fleet.ValidatePasswordRequirements(password); err != nil {
-		return nil, fleet.NewInvalidArgumentError("new_password", "Password does not meet required criteria")
+		return nil, fleet.NewInvalidArgumentError("new_password", "Password does not meet required criteria: Must include 12 characters, at least 1 number (e.g. 0 - 9), and at least 1 symbol (e.g. &*#).")
 	}
 
 	user.AdminForcedPasswordReset = false
