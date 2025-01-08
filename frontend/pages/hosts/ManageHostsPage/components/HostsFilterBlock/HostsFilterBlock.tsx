@@ -15,6 +15,8 @@ import {
 } from "interfaces/mdm";
 import { IMunkiIssuesAggregate } from "interfaces/macadmins";
 import { IPolicy } from "interfaces/policy";
+import { SoftwareAggregateStatus } from "interfaces/software";
+
 import {
   HOSTS_QUERY_PARAMS,
   MacSettingsStatusQueryParam,
@@ -22,6 +24,8 @@ import {
 
 import {
   PLATFORM_LABEL_DISPLAY_NAMES,
+  PLATFORM_TYPE_ICONS,
+  isPlatformLabelNameFromAPI,
   PolicyResponse,
 } from "utilities/constants";
 
@@ -37,6 +41,8 @@ import DiskEncryptionStatusFilter from "../DiskEncryptionStatusFilter";
 import BootstrapPackageStatusFilter from "../BootstrapPackageStatusFilter/BootstrapPackageStatusFilter";
 
 const baseClass = "hosts-filter-block";
+
+type PlatformLabelNameFromAPI = keyof typeof PLATFORM_TYPE_ICONS;
 
 interface IHostsFilterBlockProps {
   /**
@@ -69,6 +75,7 @@ interface IHostsFilterBlockProps {
     osSettingsStatus?: MdmProfileStatus;
     diskEncryptionStatus?: DiskEncryptionStatus;
     bootstrapPackageStatus?: BootstrapPackageStatus;
+    softwareStatus?: SoftwareAggregateStatus;
   };
   selectedLabel?: ILabel;
   isOnlyObserver?: boolean;
@@ -83,9 +90,11 @@ interface IHostsFilterBlockProps {
   onChangeMacSettingsFilter: (
     newMacSettingsStatus: MacSettingsStatusQueryParam
   ) => void;
+  onChangeSoftwareInstallStatusFilter: (
+    newStatus: SoftwareAggregateStatus
+  ) => void;
   onClickEditLabel: (evt: React.MouseEvent<HTMLButtonElement>) => void;
   onClickDeleteLabel: () => void;
-  isSandboxMode?: boolean;
 }
 
 /**
@@ -116,6 +125,7 @@ const HostsFilterBlock = ({
     osSettingsStatus,
     diskEncryptionStatus,
     bootstrapPackageStatus,
+    softwareStatus,
   },
   selectedLabel,
   isOnlyObserver,
@@ -126,15 +136,27 @@ const HostsFilterBlock = ({
   onChangeDiskEncryptionStatusFilter,
   onChangeBootstrapPackageStatusFilter,
   onChangeMacSettingsFilter,
+  onChangeSoftwareInstallStatusFilter,
   onClickEditLabel,
   onClickDeleteLabel,
-  isSandboxMode = false,
 }: IHostsFilterBlockProps) => {
   const renderLabelFilterPill = () => {
     if (selectedLabel) {
       const { description, display_text, label_type } = selectedLabel;
       const pillLabel =
-        PLATFORM_LABEL_DISPLAY_NAMES[display_text] ?? display_text;
+        (isPlatformLabelNameFromAPI(display_text) &&
+          PLATFORM_LABEL_DISPLAY_NAMES[display_text]) ||
+        display_text;
+
+      // Hide built-in labels supported in label dropdown
+      if (
+        label_type === "builtin" &&
+        Object.keys(PLATFORM_TYPE_ICONS).includes(
+          display_text as PlatformLabelNameFromAPI
+        )
+      ) {
+        return <></>;
+      }
 
       return (
         <>
@@ -242,6 +264,8 @@ const HostsFilterBlock = ({
           className={`${baseClass}__macsettings-dropdown`}
           options={OS_SETTINGS_FILTER_OPTIONS}
           onChange={onChangeMacSettingsFilter}
+          searchable={false}
+          iconName="filter-alt"
         />
         <FilterPill
           label={label}
@@ -251,7 +275,7 @@ const HostsFilterBlock = ({
     );
   };
 
-  const renderSoftwareFilterBlock = () => {
+  const renderSoftwareFilterBlock = (additionalClearParams?: string[]) => {
     if (!softwareDetails) return null;
 
     const { name, version } = softwareDetails;
@@ -260,6 +284,16 @@ const HostsFilterBlock = ({
       label += ` ${version}`;
     }
     label = label.trim() || "Unknown software";
+
+    const clearParams = [
+      "software_id",
+      "software_version_id",
+      "software_title_id",
+    ];
+
+    if (additionalClearParams?.length) {
+      clearParams.push(...additionalClearParams);
+    }
 
     // const TooltipDescription = (
     //   <span>
@@ -272,13 +306,7 @@ const HostsFilterBlock = ({
     return (
       <FilterPill
         label={label}
-        onClear={() =>
-          handleClearFilter([
-            "software_id",
-            "software_version_id",
-            "software_title_id",
-          ])
-        }
+        onClear={() => handleClearFilter(clearParams)}
         // tooltipDescription={TooltipDescription}
       />
     );
@@ -387,10 +415,7 @@ const HostsFilterBlock = ({
       <FilterPill
         label="Low disk space"
         tooltipDescription={TooltipDescription}
-        premiumFeatureTooltipDelayHide={1000}
         onClear={() => handleClearFilter(["low_disk_space"])}
-        isSandboxMode={isSandboxMode}
-        sandboxPremiumOnlyIcon
       />
     );
   };
@@ -404,6 +429,8 @@ const HostsFilterBlock = ({
           className={`${baseClass}__os_settings-dropdown`}
           options={OS_SETTINGS_FILTER_OPTIONS}
           onChange={onChangeOsSettingsFilter}
+          searchable={false}
+          iconName="filter-alt"
         />
         <FilterPill
           label={label}
@@ -449,6 +476,28 @@ const HostsFilterBlock = ({
     );
   };
 
+  const renderSoftwareInstallStatusBlock = () => {
+    const OPTIONS = [
+      { value: "installed", label: "Installed" },
+      { value: "failed", label: "Failed" },
+      { value: "pending", label: "Pending" },
+    ];
+
+    return (
+      <>
+        <Dropdown
+          value={softwareStatus}
+          className={`${baseClass}__sw-install-status-dropdown`}
+          options={OPTIONS}
+          searchable={false}
+          onChange={onChangeSoftwareInstallStatusFilter}
+          iconName="filter-alt"
+        />
+        {renderSoftwareFilterBlock([HOSTS_QUERY_PARAMS.SOFTWARE_STATUS])}
+      </>
+    );
+  };
+
   const showSelectedLabel = selectedLabel && selectedLabel.type !== "all";
 
   if (
@@ -458,6 +507,7 @@ const HostsFilterBlock = ({
     softwareId ||
     softwareTitleId ||
     softwareVersionId ||
+    softwareStatus ||
     mdmId ||
     mdmEnrollmentStatus ||
     lowDiskSpaceHosts ||
@@ -498,6 +548,8 @@ const HostsFilterBlock = ({
           return renderPoliciesFilterBlock();
         case !!macSettingsStatus:
           return renderMacSettingsStatusFilterBlock();
+        case !!softwareStatus:
+          return renderSoftwareInstallStatusBlock();
         case !!softwareId || !!softwareVersionId || !!softwareTitleId:
           return renderSoftwareFilterBlock();
         case !!mdmId:

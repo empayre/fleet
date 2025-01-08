@@ -1,6 +1,14 @@
 # Releasing Fleet
 
-This section outlines the release process at Fleet. The current release cadence is once every three weeks. Patch versions are released as needed.
+This section outlines the release process at Fleet. The current release cadence is one minor and one patch release every three weeks.
+
+## Script release
+
+All Fleet releases are completed using the [Fleet releaser script](https://github.com/fleetdm/fleet/blob/main/tools/release/README.md).
+
+## Manual release
+
+If necessary, manual release instructions are preserved below. 
 
 ### Prepare a new version of Fleet
 
@@ -176,6 +184,3 @@ When editing is complete, publish the release.
 5. Announce the release in the #fleet channel of [osquery Slack](https://fleetdm.com/slack) by updating the channel topic with the link to this release. 
 
 6. Announce the release in the #general channel by copying and pasting the osquery Slack channel topic.
-
-<meta name="pageOrderInSection" value="500">
-<meta name="description" value="Learn how new versions of Fleet are created, tested, and released.">

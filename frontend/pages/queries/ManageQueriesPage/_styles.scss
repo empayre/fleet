@@ -1,9 +1,6 @@
 .manage-queries-page {
   &__header-wrap {
-    height: 38px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+    @include normalize-team-header;
   }
 
   &__header {
@@ -63,7 +60,7 @@
     &__platform-dropdown {
       .Select-menu-outer {
         width: 364px;
-        max-height: 380px;
+        max-height: min-content;
 
         .Select-menu {
           max-height: none;
@@ -96,6 +93,8 @@
         }
         &__table {
           thead {
+            // maintain height when select header is removed
+            height: 52.3833px;
             .name__header {
               width: auto;
             }
@@ -131,24 +130,39 @@
               .query-name-cell {
                 display: flex; // required for inline icon
                 gap: $pad-xsmall;
-
-                .children-wrapper {
+                text-decoration: none;
+                align-items: center;
+                &:hover {
                   .query-name-text {
-                    text-overflow: ellipsis;
-                    overflow: hidden;
+                    text-decoration: underline;
+                  }
+                }
+
+                .query-name-text {
+                  text-overflow: ellipsis;
+                  overflow: hidden;
+                }
+
+                .inherited-badge {
+                  overflow: initial;
+                }
+                .observer-can-run-badge {
+                  @include tooltip5-arrow-styles;
+
+                  .react-tooltip {
+                    @include tooltip-text;
+                    font-style: normal;
+                    text-align: center;
                   }
                 }
               }
-              .query-icon {
+              .observer-can-run-query-icon {
                 display: block;
               }
 
               .children-wrapper {
                 display: flex;
                 gap: $pad-xsmall;
-              }
-              .observer-can-run-tooltip {
-                font-weight: $regular;
               }
             }
 
@@ -181,6 +195,13 @@
               }
             }
           }
+        }
+      }
+    }
+    .empty-table {
+      &__additional-info {
+        * {
+          font-size: $xx-small;
         }
       }
     }

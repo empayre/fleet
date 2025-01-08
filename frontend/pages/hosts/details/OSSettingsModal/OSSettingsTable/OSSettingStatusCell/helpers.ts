@@ -1,4 +1,7 @@
-import { ProfileOperationType } from "interfaces/mdm";
+import {
+  FLEET_FILEVAULT_PROFILE_DISPLAY_NAME,
+  ProfileOperationType,
+} from "interfaces/mdm";
 
 import { IconNames } from "components/icons";
 import {
@@ -8,6 +11,10 @@ import {
 
 import { OsSettingsTableStatusValue } from "../OSSettingsTableConfig";
 import TooltipInnerContentActionRequired from "./components/Tooltip/ActionRequired";
+
+export const isDiskEncryptionProfile = (profileName: string) => {
+  return profileName === FLEET_FILEVAULT_PROFILE_DISPLAY_NAME;
+};
 
 export type ProfileDisplayOption = {
   statusText: string;
@@ -22,15 +29,15 @@ type OperationTypeOption = Record<
 
 type ProfileDisplayConfig = Record<ProfileOperationType, OperationTypeOption>;
 
-const MAC_PROFILE_VERIFIED_DISPLAY_CONFIG: ProfileDisplayOption = {
+// Profiles for iOS and iPadOS skip the verifying step
+const APPLE_PROFILE_VERIFIED_DISPLAY_CONFIG: ProfileDisplayOption = {
   statusText: "Verified",
   iconName: "success",
   tooltip: (innerProps) =>
     innerProps.isDiskEncryptionProfile
       ? "The host turned disk encryption on and sent the key to Fleet. " +
-        "Fleet verified with osquery."
-      : "The host applied the setting. Fleet verified with osquery. " +
-        "Declaration profiles are verified with DDM.",
+        "Fleet verified."
+      : "The host applied the setting. Fleet verified.",
 } as const;
 
 const MAC_PROFILE_VERIFYING_DISPLAY_CONFIG: ProfileDisplayOption = {
@@ -47,8 +54,8 @@ const MAC_PROFILE_VERIFYING_DISPLAY_CONFIG: ProfileDisplayOption = {
 
 export const PROFILE_DISPLAY_CONFIG: ProfileDisplayConfig = {
   install: {
-    verified: MAC_PROFILE_VERIFIED_DISPLAY_CONFIG,
-    success: MAC_PROFILE_VERIFIED_DISPLAY_CONFIG,
+    verified: APPLE_PROFILE_VERIFIED_DISPLAY_CONFIG,
+    success: APPLE_PROFILE_VERIFIED_DISPLAY_CONFIG,
     verifying: MAC_PROFILE_VERIFYING_DISPLAY_CONFIG,
     acknowledged: MAC_PROFILE_VERIFYING_DISPLAY_CONFIG,
     pending: {
@@ -107,7 +114,7 @@ export const WINDOWS_DISK_ENCRYPTION_DISPLAY_CONFIG: WindowsDiskEncryptionDispla
     statusText: "Verified",
     iconName: "success",
     tooltip: () =>
-      "The host turned disk encryption on and sent the key to Fleet. Fleet verified with osquery.",
+      "The host turned disk encryption on and sent the key to Fleet. Fleet verified.",
   },
   verifying: {
     statusText: "Verifying",
@@ -126,5 +133,29 @@ export const WINDOWS_DISK_ENCRYPTION_DISPLAY_CONFIG: WindowsDiskEncryptionDispla
     statusText: "Failed",
     iconName: "error",
     tooltip: null,
+  },
+};
+
+type LinuxDiskEncryptionDisplayConfig = Omit<
+  OperationTypeOption,
+  "success" | "pending" | "acknowledged" | "verifying"
+>;
+
+export const LINUX_DISK_ENCRYPTION_DISPLAY_CONFIG: LinuxDiskEncryptionDisplayConfig = {
+  verified: {
+    statusText: "Verified",
+    iconName: "success",
+    tooltip: () =>
+      "The host turned disk encryption on and sent the key to Fleet. Fleet verified.",
+  },
+  failed: {
+    statusText: "Failed",
+    iconName: "error",
+    tooltip: null,
+  },
+  action_required: {
+    statusText: "Action required (pending)",
+    iconName: "pending-outline",
+    tooltip: TooltipInnerContentActionRequired as TooltipInnerContentFunc,
   },
 };

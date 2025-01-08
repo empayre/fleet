@@ -9,25 +9,29 @@ import { IHost } from "interfaces/host";
 import TextCell from "components/TableContainer/DataTable/TextCell";
 import LiveQueryIssueCell from "components/TableContainer/DataTable/LiveQueryIssueCell/LiveQueryIssueCell";
 import StatusIndicator from "components/StatusIndicator";
+import Button from "components/buttons/Button";
 import Icon from "components/Icon/Icon";
 
-type ITargestInputhostTableConfig = Column<IHost>;
+export type ITargestInputHostTableConfig = Column<IHost>;
 type ITableStringCellProps = IStringCellProps<IHost>;
 
 // NOTE: cellProps come from react-table
 // more info here https://react-table.tanstack.com/docs/api/useTable#cell-properties
 export const generateTableHeaders = (
   handleRowRemove?: (value: Row<IHost>) => void
-): ITargestInputhostTableConfig[] => {
+): ITargestInputHostTableConfig[] => {
   const deleteHeader = handleRowRemove
     ? [
         {
           id: "delete",
           Header: "",
           Cell: (cellProps: ITableStringCellProps) => (
-            <div onClick={() => handleRowRemove(cellProps.row)}>
+            <Button
+              onClick={() => handleRowRemove(cellProps.row)}
+              variant="icon"
+            >
               <Icon name="close-filled" />
-            </div>
+            </Button>
           ),
           disableHidden: true,
         },

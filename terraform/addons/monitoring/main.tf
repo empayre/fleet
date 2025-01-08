@@ -37,7 +37,7 @@ resource "aws_db_event_subscription" "default" {
 }
 
 locals {
-  alb_map = {for k, v in var.albs: k => v}
+  alb_map = { for k, v in var.albs : k => v }
 }
 
 
@@ -102,7 +102,7 @@ resource "aws_cloudwatch_metric_alarm" "target_response_time" {
 locals {
   http_5xx_alert_names = ["HTTPCode_ELB_5XX_Count", "HTTPCode_Target_5XX_Count"]
   http_5xx_alerts_list = flatten([for alert in local.http_5xx_alert_names : [for alb in var.albs : merge(alb, { "alert" : alert })]])
-  http_5xx_alerts      = {for k, v in local.http_5xx_alerts_list : k => v} 
+  http_5xx_alerts      = { for k, v in local.http_5xx_alerts_list : k => v }
 }
 
 
@@ -113,9 +113,9 @@ resource "aws_cloudwatch_metric_alarm" "lb" {
   evaluation_periods  = "1"
   metric_name         = each.value.alert
   namespace           = "AWS/ApplicationELB"
-  period              = "120"
+  period              = each.value.alert_thresholds[each.value.alert].period
   statistic           = "Sum"
-  threshold           = "0"
+  threshold           = each.value.alert_thresholds[each.value.alert].threshold
   alarm_description   = "This alarm indicates there are an abnormal amount of 5XX responses.  Either the lb cannot talk with the Fleet backend target or Fleet is returning an error."
   alarm_actions       = lookup(var.sns_topic_arns_map, "alb_httpcode_5xx", var.default_sns_topic_arns)
   ok_actions          = lookup(var.sns_topic_arns_map, "alb_httpcode_5xx", var.default_sns_topic_arns)
@@ -376,9 +376,11 @@ resource "aws_lambda_function" "cron_monitoring" {
       MYSQL_DATABASE              = var.cron_monitoring.mysql_database
       MYSQL_USER                  = var.cron_monitoring.mysql_user
       MYSQL_SECRETSMANAGER_SECRET = data.aws_secretsmanager_secret.mysql_database_password[0].name
-      SNS_TOPIC_ARNS              = join(",", lookup(var.sns_topic_arns_map, "cron_monitoring", var.default_sns_topic_arns))
+      CRON_SYSTEM_MONITOR_SNS_TOPIC_ARNS              = join(",", lookup(var.sns_topic_arns_map, "cron_monitoring", var.default_sns_topic_arns))
+      CRON_JOB_FAILURE_MONITOR_SNS_TOPIC_ARNS              = join(",", lookup(var.sns_topic_arns_map, "cron_job_failure_monitoring", var.default_sns_topic_arns))
       FLEET_ENV                   = var.customer_prefix
       CRON_DELAY_TOLERANCE        = var.cron_monitoring.delay_tolerance
+      CRON_MONITOR_RUN_INTERVAL        = var.cron_monitoring.run_interval
     }
   }
 
@@ -464,7 +466,7 @@ resource "aws_cloudwatch_event_rule" "cron_monitoring_lambda" {
   count               = var.cron_monitoring == null ? 0 : 1
   name                = "${var.customer_prefix}-cron-monitoring"
   schedule_expression = "rate(${var.cron_monitoring.run_interval})"
-  is_enabled          = true
+  state               = "ENABLED"
 }
 
 resource "aws_cloudwatch_event_target" "cron_monitoring_lambda" {

@@ -4,8 +4,7 @@ import { MdmEnrollmentStatus } from "interfaces/mdm";
 import permissions from "utilities/permissions";
 import { AppContext } from "context/app";
 
-// @ts-ignore
-import Dropdown from "components/forms/fields/Dropdown";
+import ActionsDropdown from "components/ActionsDropdown";
 import { generateHostActionOptions } from "./helpers";
 import { HostMdmDeviceStatusUIState } from "../../helpers";
 
@@ -19,9 +18,10 @@ interface IHostActionsDropdownProps {
    * unlocking, locking, ...etc) */
   hostMdmDeviceStatus: HostMdmDeviceStatusUIState;
   doesStoreEncryptionKey?: boolean;
-  mdmName?: string;
+  isConnectedToFleetMdm?: boolean;
   hostPlatform?: string;
   onSelect: (value: string) => void;
+  hostScriptsEnabled: boolean | null;
 }
 
 const HostActionsDropdown = ({
@@ -30,8 +30,9 @@ const HostActionsDropdown = ({
   hostMdmEnrollmentStatus,
   hostMdmDeviceStatus,
   doesStoreEncryptionKey,
-  mdmName,
+  isConnectedToFleetMdm,
   hostPlatform = "",
+  hostScriptsEnabled = false,
   onSelect,
 }: IHostActionsDropdownProps) => {
   const {
@@ -40,7 +41,6 @@ const HostActionsDropdown = ({
     isGlobalMaintainer = false,
     isMacMdmEnabledAndConfigured = false,
     isWindowsMdmEnabledAndConfigured = false,
-    isSandboxMode = false,
     currentUser,
   } = useContext(AppContext);
 
@@ -67,12 +67,12 @@ const HostActionsDropdown = ({
     isEnrolledInMdm: ["On (automatic)", "On (manual)"].includes(
       hostMdmEnrollmentStatus ?? ""
     ),
-    isFleetMdm: mdmName === "Fleet",
+    isConnectedToFleetMdm,
     isMacMdmEnabledAndConfigured,
     isWindowsMdmEnabledAndConfigured,
     doesStoreEncryptionKey: doesStoreEncryptionKey ?? false,
-    isSandboxMode,
     hostMdmDeviceStatus,
+    hostScriptsEnabled,
   });
 
   // No options to render. Exit early
@@ -80,12 +80,12 @@ const HostActionsDropdown = ({
 
   return (
     <div className={baseClass}>
-      <Dropdown
+      <ActionsDropdown
         className={`${baseClass}__host-actions-dropdown`}
         onChange={onSelect}
         placeholder="Actions"
-        searchable={false}
         options={options}
+        menuAlign="right"
       />
     </div>
   );

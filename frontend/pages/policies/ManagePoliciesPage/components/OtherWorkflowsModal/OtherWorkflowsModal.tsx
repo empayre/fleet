@@ -26,6 +26,7 @@ import Radio from "components/forms/fields/Radio";
 import validUrl from "components/forms/validators/valid_url";
 import RevealButton from "components/buttons/RevealButton";
 import CustomLink from "components/CustomLink";
+import TooltipTruncatedText from "components/TooltipTruncatedText";
 import ExampleTicket from "../ExampleTicket";
 import ExamplePayload from "../ExamplePayload";
 
@@ -33,9 +34,9 @@ interface IOtherWorkflowsModalProps {
   automationsConfig: IAutomationsConfig | ITeamAutomationsConfig;
   availableIntegrations: IGlobalIntegrations | ITeamIntegrations;
   availablePolicies: IPolicy[];
-  isUpdatingAutomations: boolean;
+  isUpdating: boolean;
   onExit: () => void;
-  handleSubmit: (formData: {
+  onSubmit: (formData: {
     webhook_settings: Pick<IWebhookSettings, "failing_policies_webhook">;
     integrations: IGlobalIntegrations | ITeamIntegrations;
   }) => void;
@@ -96,9 +97,9 @@ const OtherWorkflowsModal = ({
   automationsConfig,
   availableIntegrations,
   availablePolicies,
-  isUpdatingAutomations,
+  isUpdating,
   onExit,
-  handleSubmit,
+  onSubmit,
 }: IOtherWorkflowsModalProps): JSX.Element => {
   const {
     webhook_settings: { failing_policies_webhook: webhook },
@@ -174,7 +175,9 @@ const OtherWorkflowsModal = ({
     );
   };
 
-  const onSubmit = (evt: React.MouseEvent<HTMLFormElement> | KeyboardEvent) => {
+  const onUpdateOtherWorkflows = (
+    evt: React.MouseEvent<HTMLFormElement> | KeyboardEvent
+  ) => {
     evt.preventDefault();
 
     const newPolicyIds: number[] = [];
@@ -182,24 +185,23 @@ const OtherWorkflowsModal = ({
 
     const newErrors = { ...errors };
 
-    if (
-      isPolicyAutomationsEnabled &&
-      newPolicyIds.length &&
-      !isWebhookEnabled &&
-      !selectedIntegration
-    ) {
-      newErrors.integration = "Please enable at least one integration:";
-    } else {
-      delete newErrors.integration;
-    }
-
-    if (isWebhookEnabled) {
-      if (!destinationUrl) {
-        newErrors.url = "Please add a destination URL";
-      } else if (!validUrl({ url: destinationUrl })) {
-        newErrors.url = `${destinationUrl} is not a valid URL`;
+    if (isPolicyAutomationsEnabled) {
+      // Ticket workflow validation
+      if (newPolicyIds.length && !isWebhookEnabled && !selectedIntegration) {
+        newErrors.integration = "Please enable at least one integration:";
       } else {
-        delete newErrors.url;
+        delete newErrors.integration;
+      }
+
+      // Webhook workflow validation
+      if (isWebhookEnabled) {
+        if (!destinationUrl) {
+          newErrors.url = "Please add a destination URL";
+        } else if (!validUrl({ url: destinationUrl })) {
+          newErrors.url = `${destinationUrl} is not a valid URL`;
+        } else {
+          delete newErrors.url;
+        }
       }
     }
 
@@ -259,7 +261,7 @@ const OtherWorkflowsModal = ({
       },
     };
 
-    handleSubmit({
+    onSubmit({
       webhook_settings: newWebhook,
       integrations: {
         jira: newJira,
@@ -275,7 +277,7 @@ const OtherWorkflowsModal = ({
     const listener = (event: KeyboardEvent) => {
       if (event.code === "Enter" || event.code === "NumpadEnter") {
         event.preventDefault();
-        onSubmit(event);
+        onUpdateOtherWorkflows(event);
       }
     };
     document.addEventListener("keydown", listener);
@@ -298,6 +300,7 @@ const OtherWorkflowsModal = ({
           helpText='For each policy, Fleet will send a JSON payload to this URL with a list of the hosts that updated their answer to "No."'
           placeholder="https://server.com/example"
           tooltip="Provide a URL to deliver a webhook request to."
+          disabled={!isPolicyAutomationsEnabled}
         />
         <RevealButton
           isShowing={showExamplePayload}
@@ -306,6 +309,7 @@ const OtherWorkflowsModal = ({
           showText="Show example payload"
           caretPosition="after"
           onClick={() => setShowExamplePayload(!showExamplePayload)}
+          disabled={!isPolicyAutomationsEnabled}
         />
         {showExamplePayload && <ExamplePayload />}
       </>
@@ -364,6 +368,7 @@ const OtherWorkflowsModal = ({
       title="Other workflows"
       className={baseClass}
       width="large"
+      isContentDisabled={isUpdating}
     >
       <div className={`${baseClass} form`}>
         <Slider
@@ -372,8 +377,9 @@ const OtherWorkflowsModal = ({
             setIsPolicyAutomationsEnabled(!isPolicyAutomationsEnabled);
             setErrors({});
           }}
-          inactiveText="Policy automations disabled"
-          activeText="Policy automations enabled"
+          inactiveText="Disabled"
+          activeText="Enabled"
+          autoFocus
         />
         <div
           className={`form ${baseClass}__policy-automations__${
@@ -388,8 +394,9 @@ const OtherWorkflowsModal = ({
               id="ticket-radio-btn"
               checked={!isWebhookEnabled}
               value="ticket"
-              name="ticket"
+              name="workflow-type"
               onChange={onChangeRadio}
+              disabled={!isPolicyAutomationsEnabled}
             />
             <Radio
               className={`${baseClass}__radio-input`}
@@ -397,8 +404,9 @@ const OtherWorkflowsModal = ({
               id="webhook-radio-btn"
               checked={isWebhookEnabled}
               value="webhook"
-              name="webhook"
+              name="workflow-type"
               onChange={onChangeRadio}
+              disabled={!isPolicyAutomationsEnabled}
             />
           </div>
           {isWebhookEnabled ? renderWebhook() : renderIntegrations()}
@@ -406,25 +414,32 @@ const OtherWorkflowsModal = ({
             {availablePolicies?.length ? (
               <>
                 <div className="form-field__label">Policies:</div>
-                {policyItems &&
-                  policyItems.map((policyItem) => {
-                    const { isChecked, name, id } = policyItem;
-                    return (
-                      <div key={id}>
-                        <Checkbox
-                          value={isChecked}
-                          name={name}
-                          onChange={() => {
-                            updatePolicyItems(policyItem.id);
-                            !isChecked &&
-                              setErrors((errs) => omit(errs, "policyItems"));
-                          }}
+                <div className="automated-policies-section">
+                  {policyItems &&
+                    policyItems.map((policyItem) => {
+                      const { isChecked, name, id } = policyItem;
+                      return (
+                        <div
+                          className="policy-row"
+                          id={`policy-row--${id}`}
+                          key={id}
                         >
-                          {name}
-                        </Checkbox>
-                      </div>
-                    );
-                  })}
+                          <Checkbox
+                            value={isChecked}
+                            name={name}
+                            onChange={() => {
+                              updatePolicyItems(policyItem.id);
+                              !isChecked &&
+                                setErrors((errs) => omit(errs, "policyItems"));
+                            }}
+                            disabled={!isPolicyAutomationsEnabled}
+                          >
+                            <TooltipTruncatedText value={name} />
+                          </Checkbox>
+                        </div>
+                      );
+                    })}
+                </div>
               </>
             ) : (
               <>
@@ -439,6 +454,7 @@ const OtherWorkflowsModal = ({
               url="https://www.fleetdm.com/learn-more-about/policy-automations"
               text="Learn more"
               newTab
+              disableKeyboardNavigation={!isPolicyAutomationsEnabled}
             />
           </p>
         </div>
@@ -446,9 +462,9 @@ const OtherWorkflowsModal = ({
           <Button
             type="submit"
             variant="brand"
-            onClick={onSubmit}
+            onClick={onUpdateOtherWorkflows}
             className="save-loading"
-            isLoading={isUpdatingAutomations}
+            isLoading={isUpdating}
           >
             Save
           </Button>

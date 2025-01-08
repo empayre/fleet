@@ -14,6 +14,7 @@ import teamsAPI, {
 
 import TableContainer from "components/TableContainer";
 import TableDataError from "components/DataError";
+import TableCount from "components/TableContainer/TableCount";
 import SandboxGate from "components/Sandbox/SandboxGate";
 import SandboxMessage from "components/Sandbox/SandboxMessage";
 
@@ -115,6 +116,14 @@ const TeamManagementPage = (): JSX.Element => {
             setBackendValidators({
               name: "A team with this name already exists",
             });
+          } else if (createError.data.errors[0].reason.includes("All teams")) {
+            setBackendValidators({
+              name: `"All teams" is a reserved team name. Please try another name.`,
+            });
+          } else if (createError.data.errors[0].reason.includes("No team")) {
+            setBackendValidators({
+              name: `"No team" is a reserved team name. Please try another name.`,
+            });
           } else {
             renderFlash("error", "Could not create team. Please try again.");
             toggleCreateTeamModal();
@@ -184,6 +193,16 @@ const TeamManagementPage = (): JSX.Element => {
               setBackendValidators({
                 name: "A team with this name already exists",
               });
+            } else if (
+              updateError.data.errors[0].reason.includes("all teams")
+            ) {
+              setBackendValidators({
+                name: `"All teams" is a reserved team name.`,
+              });
+            } else if (updateError.data.errors[0].reason.includes("no team")) {
+              setBackendValidators({
+                name: `"No team" is a reserved team name. Please try another name.`,
+              });
             } else {
               renderFlash(
                 "error",
@@ -220,6 +239,14 @@ const TeamManagementPage = (): JSX.Element => {
   const tableData = useMemo(() => (teams ? generateDataSet(teams) : []), [
     teams,
   ]);
+
+  const renderTeamCount = useCallback(() => {
+    if (teams?.length === 0) {
+      return <></>;
+    }
+
+    return <TableCount name="teams" count={teams?.length} />;
+  }, [teams]);
 
   return (
     <div className={`${baseClass}`}>
@@ -262,6 +289,7 @@ const TeamManagementPage = (): JSX.Element => {
             showMarkAllPages={false}
             isAllPagesSelected={false}
             isClientSidePagination
+            renderCount={renderTeamCount}
           />
         )}
         {showCreateTeamModal && (

@@ -1,27 +1,5 @@
 agent_options:
-  path: ./lib/agent-options.yml
-controls:
-  enable_disk_encryption: true
-  macos_migration:
-    enable: true
-    mode: voluntary
-    webhook_url: $DOGFOOD_MACOS_MIGRATION_WEBHOOK_URL
-  macos_settings:
-    custom_settings: null
-  macos_setup:
-    bootstrap_package: ""
-    enable_end_user_authentication: false
-    macos_setup_assistant: null
-  macos_updates:
-    deadline: "2023-06-13"
-    minimum_version: 13.4.1
-  windows_enabled_and_configured: true
-  windows_settings:
-    custom_settings: []
-  windows_updates:
-    deadline_days: 3
-    grace_period_days: 2
-  scripts: []
+  path: ./lib/all/agent-options/agent-options.yml
 org_settings:
   features:
     enable_host_users: true
@@ -31,15 +9,34 @@ org_settings:
   host_expiry_settings:
     host_expiry_enabled: false
   integrations:
+    google_calendar:
+    - api_key_json: $DOGFOOD_CALENDAR_API_KEY
+      domain: fleetdm.com
     jira: [ ]
     zendesk: [ ]
   mdm:
-    apple_bm_default_team: $DOGFOOD_APPLE_BM_DEFAULT_TEAM
+    end_user_authentication:
+      entity_id: dogfood-eula.fleetdm.com
+      idp_name: Google Workspace
+      metadata_url: $DOGFOOD_MDM_SSO_METADATA_URL
+    apple_business_manager:
+    - organization_name: Fleet Device Management Inc.
+      macos_team: "💻 Workstations" 
+      ios_team: "📱🏢 Company-owned iPhones"
+      ipados_team: "🔳🏢 Company-owned iPads"
+    volume_purchasing_program:
+    - location: Fleet Device Management Inc.
+      teams:
+      - "💻 Workstations"
+      - "💻🐣 Workstations (canary)"
+      - "📱🏢 Company-owned iPhones"
+      - "🔳🏢 Company-owned iPads"
+      - "📱🔐 Personally-owned iPhones"
   org_info:
     contact_url: https://fleetdm.com/company/contact
     org_logo_url: ""
     org_logo_url_light_background: ""
-    org_name: Fleet Device Management
+    org_name: Fleet
   secrets:
     - secret: $DOGFOOD_GLOBAL_ENROLL_SECRET
   server_settings:
@@ -66,8 +63,8 @@ org_settings:
     metadata_url: ""
   webhook_settings:
     failing_policies_webhook:
-      destination_url: $DOGFOOD_FAILING_POLICIES_WEBHOOK_URL
-      enable_failing_policies_webhook: true
+      destination_url: ""
+      enable_failing_policies_webhook: false
       host_batch_size: 0
       policy_ids: []
     host_status_webhook:
@@ -77,9 +74,17 @@ org_settings:
       host_percentage: 25
     interval: 1m0s
     vulnerabilities_webhook:
-      destination_url: $DOGFOOD_VULNERABILITIES_WEBHOOK_URL
-      enable_vulnerabilities_webhook: true
+      destination_url: ""
+      enable_vulnerabilities_webhook: false
       host_batch_size: 0
 policies:
 queries:
-  - path: ./lib/collect-fleetd-update-channels.queries.yml
+  - path: ./lib/all/queries/collect-fleetd-update-channels.yml
+controls: 
+  enable_disk_encryption: true
+  macos_migration:
+    enable: true
+    mode: voluntary
+    webhook_url: $DOGFOOD_MACOS_MIGRATION_WEBHOOK_URL
+  windows_enabled_and_configured: true
+  windows_migration_enabled: true

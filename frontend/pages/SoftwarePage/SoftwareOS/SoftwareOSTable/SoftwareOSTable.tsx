@@ -1,25 +1,28 @@
 /** software/os OS tab > Table */
 
-import React, { useCallback, useContext, useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import { InjectedRouter } from "react-router";
 import { Row } from "react-table";
 
 import PATHS from "router/paths";
 
-import { AppContext } from "context/app";
 import { GITHUB_NEW_ISSUE_LINK } from "utilities/constants";
 
+// @ts-ignore
+import Dropdown from "components/forms/fields/Dropdown";
 import CustomLink from "components/CustomLink";
 import TableContainer from "components/TableContainer";
 import LastUpdatedText from "components/LastUpdatedText";
 import { ITableQueryData } from "components/TableContainer/TableContainer";
+import TableCount from "components/TableContainer/TableCount";
 
 import EmptySoftwareTable from "pages/SoftwarePage/components/EmptySoftwareTable";
 import { IOSVersionsResponse } from "services/entities/operating_systems";
 
-import generateTableConfig from "pages/DashboardPage/cards/OperatingSystems/OperatingSystemsTableConfig";
+import generateTableConfig from "pages/DashboardPage/cards/OperatingSystems/OSTableConfig";
 import { buildQueryStringFromParams } from "utilities/url";
 import { getNextLocationPath } from "utilities/helpers";
+import { SelectedPlatform } from "interfaces/platform";
 
 const baseClass = "software-os-table";
 
@@ -39,7 +42,47 @@ interface ISoftwareOSTableProps {
   currentPage: number;
   teamId?: number;
   isLoading: boolean;
+  resetPageIndex: boolean;
+  platform?: SelectedPlatform;
 }
+
+const PLATFORM_FILTER_OPTIONS = [
+  {
+    disabled: false,
+    label: "All platforms",
+    value: "all",
+  },
+  {
+    disabled: false,
+    label: "macOS",
+    value: "darwin",
+  },
+  {
+    disabled: false,
+    label: "Windows",
+    value: "windows",
+  },
+  {
+    disabled: false,
+    label: "Linux",
+    value: "linux",
+  },
+  {
+    disabled: false,
+    label: "ChromeOS",
+    value: "chrome",
+  },
+  {
+    disabled: false,
+    label: "iOS",
+    value: "ios",
+  },
+  {
+    disabled: false,
+    label: "iPadOS",
+    value: "ipados",
+  },
+];
 
 const SoftwareOSTable = ({
   router,
@@ -51,9 +94,9 @@ const SoftwareOSTable = ({
   currentPage,
   teamId,
   isLoading,
+  resetPageIndex,
+  platform,
 }: ISoftwareOSTableProps) => {
-  const { isSandboxMode, noSandboxHosts } = useContext(AppContext);
-
   const determineQueryParamChange = useCallback(
     (newTableQuery: ITableQueryData) => {
       const changedEntry = Object.entries(newTableQuery).find(([key, val]) => {
@@ -64,13 +107,15 @@ const SoftwareOSTable = ({
             return val !== orderKey;
           case "pageIndex":
             return val !== currentPage;
+          case "platform":
+            return val !== platform;
           default:
             return false;
         }
       });
       return changedEntry?.[0] ?? "";
     },
-    [currentPage, orderDirection, orderKey]
+    [platform, currentPage, orderDirection, orderKey]
   );
 
   const generateNewQueryParams = useCallback(
@@ -92,7 +137,7 @@ const SoftwareOSTable = ({
       const changedParam = determineQueryParamChange(newTableQuery);
 
       // if nothing has changed, don't update the route. this can happen when
-      // this handler is called on the inital render.
+      // this handler is called on the initial render.
       if (changedParam === "") return;
 
       const newRoute = getNextLocationPath({
@@ -128,38 +173,35 @@ const SoftwareOSTable = ({
     router.push(path);
   };
 
-  const getItemsCountText = () => {
-    const count = data?.count;
-    if (!data?.os_versions || !count) return "";
+  // Determines if a user should be able to filter the table
+  const hasData = data?.os_versions && data?.os_versions.length > 0;
+  const hasPlatformFilter = platform !== "all";
 
-    return count === 1 ? `${count} item` : `${count} items`;
-  };
-
-  const getLastUpdatedText = () => {
-    if (!data?.os_versions || !data?.counts_updated_at) return "";
-    return (
-      <LastUpdatedText
-        lastUpdatedAt={data.counts_updated_at}
-        whatToRetrieve="software"
-      />
-    );
-  };
+  const showFilterHeaders = isSoftwareEnabled && (hasData || hasPlatformFilter);
 
   const renderSoftwareCount = () => {
-    const itemText = getItemsCountText();
-    const lastUpdatedText = getLastUpdatedText();
-
-    if (!itemText) return null;
+    if (!data) return null;
 
     return (
-      <div className={`${baseClass}__count`}>
-        <span>{itemText}</span>
-        {lastUpdatedText}
-      </div>
+      <>
+        <TableCount name="items" count={data?.count} />
+        {showFilterHeaders && data?.counts_updated_at && (
+          <LastUpdatedText
+            lastUpdatedAt={data.counts_updated_at}
+            customTooltipText={
+              <>
+                The last time software data was <br />
+                updated, including vulnerabilities <br />
+                and host counts.
+              </>
+            }
+          />
+        )}
+      </>
     );
   };
 
-  const renderTableFooter = () => {
+  const renderTableHelpText = () => {
     return (
       <div>
         Seeing unexpected software or vulnerabilities?{" "}
@@ -172,6 +214,34 @@ const SoftwareOSTable = ({
     );
   };
 
+  const handlePlatformFilterDropdownChange = (platformSelected: string) => {
+    router?.replace(
+      getNextLocationPath({
+        pathPrefix: PATHS.SOFTWARE_OS,
+        queryParams: {
+          team_id: teamId,
+          order_direction: orderDirection,
+          order_key: orderKey,
+          page: 0,
+          platform: platformSelected,
+        },
+      })
+    );
+  };
+
+  const renderPlatformDropdown = () => {
+    return (
+      <Dropdown
+        value={platform || "all"}
+        className={`${baseClass}__platform-dropdown`}
+        options={PLATFORM_FILTER_OPTIONS}
+        searchable={false}
+        onChange={handlePlatformFilterDropdownChange}
+        tableFilterDropdown
+      />
+    );
+  };
+
   return (
     <div className={baseClass}>
       <TableContainer
@@ -181,9 +251,9 @@ const SoftwareOSTable = ({
         resultsTitle="items"
         emptyComponent={() => (
           <EmptySoftwareTable
+            tableName="operating systems"
             isSoftwareDisabled={!isSoftwareEnabled}
-            isSandboxMode={isSandboxMode}
-            noSandboxHosts={noSandboxHosts}
+            noSearchQuery // non-searchable table renders not detecting by default
           />
         )}
         defaultSortHeader={orderKey}
@@ -193,14 +263,15 @@ const SoftwareOSTable = ({
         pageSize={perPage}
         showMarkAllPages={false}
         isAllPagesSelected={false}
+        customControl={showFilterHeaders ? renderPlatformDropdown : undefined}
         disableNextPage={!data?.meta.has_next_results}
         searchable={false}
         onQueryChange={onQueryChange}
-        stackControls
         renderCount={renderSoftwareCount}
-        renderFooter={renderTableFooter}
+        renderTableHelpText={renderTableHelpText}
         disableMultiRowSelect
         onSelectSingleRow={handleRowSelect}
+        resetPageIndex={resetPageIndex}
       />
     </div>
   );

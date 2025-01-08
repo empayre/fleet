@@ -406,6 +406,69 @@ module.exports = {
       }],
       tags: [`enabled:false`],
     });
+    // aiFeaturesDisabled
+    let numberOfInstancesWithAiFeaturesDisabled = _.where(latestStatisticsReportedByReleasedFleetVersions, {aiFeaturesDisabled: true}).length;
+    let numberOfInstancesWithAiFeaturesEnabled = numberOfInstancesToReport - numberOfInstancesWithAiFeaturesDisabled;
+    metricsToReport.push({
+      metric: 'usage_statistics.ai_features',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithAiFeaturesEnabled
+      }],
+      tags: [`enabled:true`],
+    });
+    metricsToReport.push({
+      metric: 'usage_statistics.ai_features',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithAiFeaturesDisabled
+      }],
+      tags: [`enabled:false`],
+    });
+    // maintenanceWindowsEnabled
+    let numberOfInstancesWithMaintenanceWindowsEnabled = _.where(latestStatisticsReportedByReleasedFleetVersions, {maintenanceWindowsEnabled: true}).length;
+    let numberOfInstancesWithMaintenanceWindowsDisabled = numberOfInstancesToReport - numberOfInstancesWithMaintenanceWindowsEnabled;
+    metricsToReport.push({
+      metric: 'usage_statistics.maintenance_windows',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithMaintenanceWindowsEnabled
+      }],
+      tags: [`enabled:true`],
+    });
+    metricsToReport.push({
+      metric: 'usage_statistics.maintenance_windows',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithMaintenanceWindowsDisabled
+      }],
+      tags: [`enabled:false`],
+    });
+    // maintenanceWindowsConfigured
+    let numberOfInstancesWithMaintenanceWindowsConfigured = _.where(latestStatisticsReportedByReleasedFleetVersions, {maintenanceWindowsEnabled: true}).length;
+    let numberOfInstancesWithoutMaintenanceWindowsConfigured = numberOfInstancesToReport - numberOfInstancesWithMaintenanceWindowsConfigured;
+    metricsToReport.push({
+      metric: 'usage_statistics.maintenance_windows_configured',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithMaintenanceWindowsConfigured
+      }],
+      tags: [`configured:true`],
+    });
+    metricsToReport.push({
+      metric: 'usage_statistics.maintenance_windows_configured',
+      type: 3,
+      points: [{
+        timestamp: timestampForTheseMetrics,
+        value: numberOfInstancesWithoutMaintenanceWindowsConfigured
+      }],
+      tags: [`configured:false`],
+    });
 
     // Create two metrics to track total number of hosts reported in the last week.
     let totalNumberOfHostsReportedByPremiumInstancesInTheLastWeek = _.sum(_.pluck(_.filter(latestStatisticsReportedByReleasedFleetVersions, {licenseTier: 'premium'}), 'numHostsEnrolled'));
@@ -429,6 +492,31 @@ module.exports = {
       }],
       tags: [`license_tier:free`],
     });
+
+    // FUTURE: Uncomment the section below to send metrics about reported number of queries to Datadog.
+    // let fleetInstancesThatReportedNumQueries = _.filter(latestStatisticsReportedByReleasedFleetVersions, (statistics)=>{
+    //   return statistics.numQueries > 0;
+    // });
+
+    // let averageNumberOfQueries = Math.foor(_.sum(_.pluck(fleetInstancesThatReportedNumQueries, 'numQueries')) / fleetInstancesThatReportedNumQueries.length);
+    // metricsToReport.push({
+    //   metric: 'usage_statistics.avg_num_queries',
+    //   type: 3,
+    //   points: [{
+    //     timestamp: timestampForTheseMetrics,
+    //     value: averageNumberOfQueries
+    //   }],
+    // });
+
+    // let highestNumberOfQueries = _.max(_.pluck(fleetInstancesThatReportedNumQueries, 'numQueries'));
+    // metricsToReport.push({
+    //   metric: 'usage_statistics.max_num_queries',
+    //   type: 3,
+    //   points: [{
+    //     timestamp: timestampForTheseMetrics,
+    //     value: highestNumberOfQueries
+    //   }],
+    // });
 
     // Break the metrics into smaller arrays to ensure we don't exceed Datadog's 512 kb request body limit.
     let chunkedMetrics = _.chunk(metricsToReport, 500);// Note: 500 stringified JSON metrics is ~410 kb.

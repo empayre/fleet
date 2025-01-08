@@ -1,6 +1,12 @@
 package fleet
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/Masterminds/semver"
+)
 
 // OperatingSystem is an operating system uniquely identified according to its name and version.
 type OperatingSystem struct {
@@ -26,4 +32,28 @@ type OperatingSystem struct {
 // IsWindows returns whether the OperatingSystem record references a Windows OS
 func (os OperatingSystem) IsWindows() bool {
 	return strings.ToLower(os.Platform) == "windows"
+}
+
+var macOSNudgeLastVersion = semver.MustParse("14")
+var macOSRapidSecurityResponseVersionSuffix = regexp.MustCompile(` \([a-z]\)`)
+
+// RequiresNudge returns whether the target platform is darwin and
+// below version 14. Starting at macOS 14 nudge is no longer required,
+// as the mechanism to notify users about updates is built in.
+func (os *OperatingSystem) RequiresNudge() (bool, error) {
+	if os.Platform != "darwin" {
+		return false, nil
+	}
+
+	// strip Rapid Security Response suffix (e.g. version 13.3.7 (a)) if any
+	version, err := semver.NewVersion(macOSRapidSecurityResponseVersionSuffix.ReplaceAllString(os.Version, ``))
+	if err != nil {
+		return false, fmt.Errorf("parsing macos version \"%s\": %w", os.Version, err)
+	}
+
+	if version.LessThan(macOSNudgeLastVersion) {
+		return true, nil
+	}
+
+	return false, nil
 }

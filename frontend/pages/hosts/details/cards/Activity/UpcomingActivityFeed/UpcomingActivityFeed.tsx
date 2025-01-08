@@ -1,7 +1,7 @@
 import React from "react";
 
-import { IActivity, IActivityDetails } from "interfaces/activity";
-import { IActivitiesResponse } from "services/entities/activities";
+import { ActivityType, IHostUpcomingActivity } from "interfaces/activity";
+import { IHostUpcomingActivitiesResponse } from "services/entities/activities";
 
 // @ts-ignore
 import FleetIcon from "components/icons/FleetIcon";
@@ -9,13 +9,13 @@ import DataError from "components/DataError";
 import Button from "components/buttons/Button";
 
 import EmptyFeed from "../EmptyFeed/EmptyFeed";
-import UpcomingActivity from "../UpcomingActivity/UpcomingActivity";
 import { ShowActivityDetailsHandler } from "../Activity";
+import { upcomingActivityComponentMap } from "../ActivityConfig";
 
 const baseClass = "upcoming-activity-feed";
 
 interface IUpcomingActivityFeedProps {
-  activities?: IActivitiesResponse;
+  activities?: IHostUpcomingActivitiesResponse;
   isError?: boolean;
   onDetailsClick: ShowActivityDetailsHandler;
   onNextPage: () => void;
@@ -43,7 +43,7 @@ const UpcomingActivityFeed = ({
     return (
       <EmptyFeed
         title="No pending activity "
-        message="When you run a script on an offline host, it will appear here."
+        message="Pending actions will appear here (scripts, software, lock, and wipe)."
         className={`${baseClass}__empty-feed`}
       />
     );
@@ -52,12 +52,30 @@ const UpcomingActivityFeed = ({
   return (
     <div className={baseClass}>
       <div>
-        {activitiesList.map((activity: IActivity) => (
-          <UpcomingActivity
-            activity={activity}
-            onDetailsClick={onDetailsClick}
-          />
-        ))}
+        {activitiesList.map((activity: IHostUpcomingActivity) => {
+          // TODO: remove this once we have a proper way of handling "Fleet-initiated" activities in
+          // the backend. For now, if all these fields are empty, then we assume it was
+          // Fleet-initiated.
+          if (
+            !activity.actor_email &&
+            !activity.actor_full_name &&
+            (activity.type === ActivityType.InstalledSoftware ||
+              activity.type === ActivityType.InstalledAppStoreApp ||
+              activity.type === ActivityType.RanScript)
+          ) {
+            activity.actor_full_name = "Fleet";
+          }
+          const ActivityItemComponent =
+            upcomingActivityComponentMap[activity.type];
+          return (
+            <ActivityItemComponent
+              key={activity.id}
+              tab="upcoming"
+              activity={activity}
+              onShowDetails={onDetailsClick}
+            />
+          );
+        })}
       </div>
       <div className={`${baseClass}__pagination`}>
         <Button

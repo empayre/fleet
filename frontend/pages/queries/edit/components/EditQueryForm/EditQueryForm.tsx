@@ -7,15 +7,21 @@ import React, {
   useMemo,
 } from "react";
 import { InjectedRouter } from "react-router";
+
 import { pull, size } from "lodash";
 import classnames from "classnames";
 import { useDebouncedCallback } from "use-debounce";
+import { IAceEditor } from "react-ace/lib/types";
+import ReactTooltip from "react-tooltip";
+
 import { COLORS } from "styles/var/colors";
 
 import PATHS from "router/paths";
+
 import { AppContext } from "context/app";
 import { QueryContext } from "context/query";
 import { NotificationContext } from "context/notification";
+
 import {
   addGravatarUrlToResource,
   getCustomDropdownOptions,
@@ -27,19 +33,21 @@ import {
   SCHEDULE_PLATFORM_DROPDOWN_OPTIONS,
   MIN_OSQUERY_VERSION_OPTIONS,
   LOGGING_TYPE_OPTIONS,
+  INVALID_PLATFORMS_REASON,
+  INVALID_PLATFORMS_FLASH_MESSAGE,
 } from "utilities/constants";
+
 import usePlatformCompatibility from "hooks/usePlatformCompatibility";
-import { IApiError } from "interfaces/errors";
+
+import { getErrorReason, IApiError } from "interfaces/errors";
 import {
   ISchedulableQuery,
   ICreateQueryRequestBody,
   QueryLoggingOption,
 } from "interfaces/schedulable_query";
 import { SelectedPlatformString } from "interfaces/platform";
-import queryAPI from "services/entities/queries";
 
-import { IAceEditor } from "react-ace/lib/types";
-import ReactTooltip from "react-tooltip";
+import queryAPI from "services/entities/queries";
 
 import Avatar from "components/Avatar";
 import FleetAce from "components/FleetAce";
@@ -50,9 +58,13 @@ import RevealButton from "components/buttons/RevealButton";
 import Checkbox from "components/forms/fields/Checkbox";
 // @ts-ignore
 import Dropdown from "components/forms/fields/Dropdown";
+import Slider from "components/forms/fields/Slider";
+import TooltipWrapper from "components/TooltipWrapper";
 import Spinner from "components/Spinner";
 import Icon from "components/Icon/Icon";
 import AutoSizeInputField from "components/forms/fields/AutoSizeInputField";
+import LogDestinationIndicator from "components/LogDestinationIndicator";
+
 import SaveQueryModal from "../SaveQueryModal";
 import ConfirmSaveChangesModal from "../ConfirmSaveChangesModal";
 import DiscardDataOption from "../DiscardDataOption";
@@ -63,6 +75,7 @@ interface IEditQueryFormProps {
   router: InjectedRouter;
   queryIdForEdit: number | null;
   apiTeamIdForQuery?: number;
+  currentTeamId?: number;
   teamNameForQuery?: string;
   showOpenSchemaActionText: boolean;
   storedQuery: ISchedulableQuery | undefined;
@@ -97,6 +110,7 @@ const EditQueryForm = ({
   router,
   queryIdForEdit,
   apiTeamIdForQuery,
+  currentTeamId,
   teamNameForQuery,
   showOpenSchemaActionText,
   storedQuery,
@@ -123,6 +137,7 @@ const EditQueryForm = ({
     lastEditedQueryBody,
     lastEditedQueryObserverCanRun,
     lastEditedQueryFrequency,
+    lastEditedQueryAutomationsEnabled,
     lastEditedQueryPlatforms,
     lastEditedQueryMinOsqueryVersion,
     lastEditedQueryLoggingType,
@@ -132,6 +147,7 @@ const EditQueryForm = ({
     setLastEditedQueryBody,
     setLastEditedQueryObserverCanRun,
     setLastEditedQueryFrequency,
+    setLastEditedQueryAutomationsEnabled,
     setLastEditedQueryPlatforms,
     setLastEditedQueryMinOsqueryVersion,
     setLastEditedQueryLoggingType,
@@ -143,6 +159,7 @@ const EditQueryForm = ({
     currentUser,
     isOnlyObserver,
     isGlobalObserver,
+    isTeamMaintainerOrTeamAdmin,
     isAnyTeamMaintainerOrTeamAdmin,
     isGlobalAdmin,
     isGlobalMaintainer,
@@ -167,6 +184,7 @@ const EditQueryForm = ({
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [isSaveAsNewLoading, setIsSaveAsNewLoading] = useState(false);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [queryWasChanged, setQueryWasChanged] = useState(false);
 
   const platformCompatibility = usePlatformCompatibility();
   const { setCompatiblePlatforms } = platformCompatibility;
@@ -216,6 +234,7 @@ const EditQueryForm = ({
   };
 
   const onChangeQuery = (sqlString: string) => {
+    setQueryWasChanged(true);
     setLastEditedQueryBody(sqlString);
   };
 
@@ -311,6 +330,7 @@ const EditQueryForm = ({
           team_id: apiTeamIdForQuery,
           observer_can_run: lastEditedQueryObserverCanRun,
           interval: lastEditedQueryFrequency,
+          automations_enabled: lastEditedQueryAutomationsEnabled,
           platform: lastEditedQueryPlatforms,
           min_osquery_version: lastEditedQueryMinOsqueryVersion,
           logging: lastEditedQueryLoggingType,
@@ -326,7 +346,8 @@ const EditQueryForm = ({
           renderFlash("success", `Successfully added query.`);
         })
         .catch((createError: { data: IApiError }) => {
-          if (createError.data.errors[0].reason.includes("already exists")) {
+          const createErrorReason = getErrorReason(createError);
+          if (createErrorReason.includes("already exists")) {
             queryAPI
               .create({
                 name: `Copy of ${lastEditedQueryName}`,
@@ -335,6 +356,7 @@ const EditQueryForm = ({
                 team_id: apiTeamIdForQuery,
                 observer_can_run: lastEditedQueryObserverCanRun,
                 interval: lastEditedQueryFrequency,
+                automations_enabled: lastEditedQueryAutomationsEnabled,
                 platform: lastEditedQueryPlatforms,
                 min_osquery_version: lastEditedQueryMinOsqueryVersion,
                 logging: lastEditedQueryLoggingType,
@@ -349,9 +371,7 @@ const EditQueryForm = ({
               })
               .catch((createCopyError: { data: IApiError }) => {
                 if (
-                  createCopyError.data.errors[0].reason.includes(
-                    "already exists"
-                  )
+                  getErrorReason(createCopyError).includes("already exists")
                 ) {
                   let teamErrorText;
                   if (apiTeamIdForQuery !== 0) {
@@ -370,6 +390,9 @@ const EditQueryForm = ({
                 }
                 setIsSaveAsNewLoading(false);
               });
+          } else if (createErrorReason.includes(INVALID_PLATFORMS_REASON)) {
+            setIsSaveAsNewLoading(false);
+            renderFlash("error", INVALID_PLATFORMS_FLASH_MESSAGE);
           } else {
             setIsSaveAsNewLoading(false);
             renderFlash("error", "Could not create query. Please try again.");
@@ -398,11 +421,14 @@ const EditQueryForm = ({
         setShowSaveQueryModal(true);
       } else {
         onUpdate({
-          name: lastEditedQueryName,
+          // name should already be trimmed at this point due to associated onBlurs, but this
+          // doesn't hurt
+          name: lastEditedQueryName.trim(),
           description: lastEditedQueryDescription,
           query: lastEditedQueryBody,
           observer_can_run: lastEditedQueryObserverCanRun,
           interval: lastEditedQueryFrequency,
+          automations_enabled: lastEditedQueryAutomationsEnabled,
           platform: lastEditedQueryPlatforms,
           min_osquery_version: lastEditedQueryMinOsqueryVersion,
           logging: lastEditedQueryLoggingType,
@@ -491,6 +517,9 @@ const EditQueryForm = ({
             maxLength={160}
             hasError={errors && errors.name}
             onChange={setLastEditedQueryName}
+            onBlur={() => {
+              setLastEditedQueryName(lastEditedQueryName.trim());
+            }}
             onKeyPress={onInputKeypress}
             isFocused={isEditingName}
           />
@@ -581,9 +610,7 @@ const EditQueryForm = ({
           data-testid="ace-editor"
         />
       )}
-      <span className={`${baseClass}__platform-compatibility`}>
-        {renderPlatformCompatibility()}
-      </span>
+      {renderPlatformCompatibility()}
       {renderLiveQueryWarning()}
       {(lastEditedQueryObserverCanRun ||
         isObserverPlus ||
@@ -601,7 +628,7 @@ const EditQueryForm = ({
               onClick={() => {
                 router.push(
                   PATHS.LIVE_QUERY(queryIdForEdit) +
-                    TAGGED_TEMPLATES.queryByHostRoute(hostId)
+                    TAGGED_TEMPLATES.queryByHostRoute(hostId, apiTeamIdForQuery)
                 );
               }}
               disabled={disabledLiveQuery}
@@ -624,7 +651,8 @@ const EditQueryForm = ({
     </form>
   );
 
-  const hasSavePermissions = isGlobalAdmin || isGlobalMaintainer;
+  const hasSavePermissions =
+    isGlobalAdmin || isGlobalMaintainer || isTeamMaintainerOrTeamAdmin;
 
   const currentlySavingQueryResults =
     storedQuery &&
@@ -670,17 +698,10 @@ const EditQueryForm = ({
 
   // Global admin, any maintainer, any observer+ on new query
   const renderEditableQueryForm = () => {
-    // Save disabled for team maintainer/admins viewing global queries
-    const disableSavePermissionDenied =
-      isAnyTeamMaintainerOrTeamAdmin &&
-      !storedQuery?.team_id &&
-      !!queryIdForEdit;
-
     // Save and save as new disabled for query name blank on existing query or sql errors
     const disableSaveFormErrors =
       (lastEditedQueryName === "" && !!lastEditedQueryId) || !!size(errors);
 
-    console.log("lastEditedQueryPlatforms", lastEditedQueryPlatforms);
     return (
       <>
         <form className={`${baseClass}`} autoComplete="off">
@@ -706,9 +727,8 @@ const EditQueryForm = ({
             wrapEnabled
             focus={!savedQueryMode}
           />
-          <span className={`${baseClass}__platform-compatibility`}>
-            {renderPlatformCompatibility()}
-          </span>
+          {renderPlatformCompatibility()}
+
           {savedQueryMode && (
             <>
               <Dropdown
@@ -720,6 +740,50 @@ const EditQueryForm = ({
                 label="Frequency"
                 wrapperClassName={`${baseClass}__form-field form-field--frequency`}
                 helpText="This is how often your query collects data."
+              />
+              <Slider
+                onChange={() =>
+                  setLastEditedQueryAutomationsEnabled(
+                    !lastEditedQueryAutomationsEnabled
+                  )
+                }
+                value={lastEditedQueryAutomationsEnabled}
+                activeText={
+                  <>
+                    Automations on
+                    {lastEditedQueryFrequency === 0 && (
+                      <TooltipWrapper
+                        tipContent={
+                          <>
+                            Automations and reporting will be paused <br />
+                            for this query until a frequency is set.
+                          </>
+                        }
+                        position="right"
+                        tipOffset={9}
+                        showArrow
+                        underline={false}
+                      >
+                        <Icon name="warning" />
+                      </TooltipWrapper>
+                    )}
+                  </>
+                }
+                inactiveText="Automations off"
+                helpText={
+                  <>
+                    Historical results will
+                    {!lastEditedQueryAutomationsEnabled ? " not " : " "}be sent
+                    to your log destination:{" "}
+                    <b>
+                      <LogDestinationIndicator
+                        logDestination={config?.logging.result.plugin || ""}
+                        excludeTooltip
+                      />
+                    </b>
+                    .
+                  </>
+                }
               />
               <Checkbox
                 value={lastEditedQueryObserverCanRun}
@@ -780,7 +844,7 @@ const EditQueryForm = ({
           )}
           {renderLiveQueryWarning()}
           <div className={`button-wrap ${baseClass}__button-wrap--new-query`}>
-            {(hasSavePermissions || isAnyTeamMaintainerOrTeamAdmin) && (
+            {hasSavePermissions && (
               <>
                 {savedQueryMode && (
                   <Button
@@ -794,42 +858,19 @@ const EditQueryForm = ({
                   </Button>
                 )}
                 <div className={`${baseClass}__button-wrap--save-query-button`}>
-                  <div
-                    data-tip
-                    data-for="save-query-button"
-                    // Tooltip shows for team maintainer/admins viewing global queries
-                    data-tip-disable={!disableSavePermissionDenied}
+                  <Button
+                    className="save-loading"
+                    variant="brand"
+                    onClick={
+                      confirmChanges
+                        ? toggleConfirmSaveChangesModal
+                        : promptSaveQuery()
+                    }
+                    disabled={disableSaveFormErrors}
+                    isLoading={isQueryUpdating}
                   >
-                    <Button
-                      className="save-loading"
-                      variant="brand"
-                      onClick={
-                        confirmChanges
-                          ? toggleConfirmSaveChangesModal
-                          : promptSaveQuery()
-                      }
-                      // Button disabled for team maintainer/admins viewing global queries
-                      disabled={
-                        disableSavePermissionDenied || disableSaveFormErrors
-                      }
-                      isLoading={isQueryUpdating}
-                    >
-                      Save
-                    </Button>
-                  </div>{" "}
-                  <ReactTooltip
-                    className={`save-query-button-tooltip`}
-                    place="top"
-                    effect="solid"
-                    backgroundColor={COLORS["tooltip-bg"]}
-                    id="save-query-button"
-                    data-html
-                  >
-                    <>
-                      You can only save changes
-                      <br /> to a team level query.
-                    </>
-                  </ReactTooltip>
+                    Save
+                  </Button>
                 </div>
               </>
             )}
@@ -843,10 +884,20 @@ const EditQueryForm = ({
                 className={`${baseClass}__run`}
                 variant="blue-green"
                 onClick={() => {
-                  setEditingExistingQuery(true); // Persists edited query data through live query flow
+                  // calling `setEditingExistingQuery` here prevents
+                  // inclusion of `query_id` in the subsequent `run` API call, which prevents counting
+                  // this live run in performance impact. Since we DO want to count this run in those
+                  // stats if the query is the same as the saved one, only set below IF the query
+                  // has been changed.
+                  // TODO - product: should host details > action > query > <select existing query>
+                  // go to the host details page instead of the edit query page, where the user has
+                  // the choice to edit the query or run it live directly?
+                  if (queryWasChanged) {
+                    setEditingExistingQuery(true); // Persists edited query data through live query flow
+                  }
                   router.push(
                     PATHS.LIVE_QUERY(queryIdForEdit) +
-                      TAGGED_TEMPLATES.queryByHostRoute(hostId)
+                      TAGGED_TEMPLATES.queryByHostRoute(hostId, currentTeamId)
                   );
                 }}
                 disabled={disabledLiveQuery}

@@ -31,9 +31,10 @@ func (ds *Datastore) NewUser(ctx context.Context, user *fleet.User) (*fleet.User
       	gravatar_url,
       	position,
         sso_enabled,
+	    mfa_enabled,
 		api_only,
 		global_role
-      ) VALUES (?,?,?,?,?,?,?,?,?,?)
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
       `
 		result, err := tx.ExecContext(ctx, sqlStatement,
 			user.Password,
@@ -44,14 +45,20 @@ func (ds *Datastore) NewUser(ctx context.Context, user *fleet.User) (*fleet.User
 			user.GravatarURL,
 			user.Position,
 			user.SSOEnabled,
+			user.MFAEnabled,
 			user.APIOnly,
 			user.GlobalRole)
+
+		// set timestamp as close as possible to insert query to be as accurate as possible without needing to SELECT
+		user.CreatedAt = time.Now().UTC().Truncate(time.Second) // truncating because DB is at second resolution
+		user.UpdatedAt = user.CreatedAt
+
 		if err != nil {
 			return ctxerr.Wrap(ctx, err, "create new user")
 		}
 
 		id, _ := result.LastInsertId()
-		user.ID = uint(id)
+		user.ID = uint(id) //nolint:gosec // dismiss G115
 
 		if err := saveTeamsForUserDB(ctx, tx, user); err != nil {
 			return err
@@ -163,6 +170,7 @@ func saveUserDB(ctx context.Context, tx sqlx.ExtContext, user *fleet.User) error
       	gravatar_url = ?,
       	position = ?,
         sso_enabled = ?,
+        mfa_enabled = ?,
         api_only = ?,
 		global_role = ?
       WHERE id = ?
@@ -176,6 +184,7 @@ func saveUserDB(ctx context.Context, tx sqlx.ExtContext, user *fleet.User) error
 		user.GravatarURL,
 		user.Position,
 		user.SSOEnabled,
+		user.MFAEnabled,
 		user.APIOnly,
 		user.GlobalRole,
 		user.ID)
@@ -276,13 +285,13 @@ func (ds *Datastore) DeleteUser(ctx context.Context, id uint) error {
 	return ds.deleteEntity(ctx, usersTable, id)
 }
 
-func amountUsersDB(ctx context.Context, db sqlx.QueryerContext) (int, error) {
-	var amount int
-	err := sqlx.GetContext(ctx, db, &amount, `SELECT count(*) FROM users`)
+func tableRowsCount(ctx context.Context, db sqlx.QueryerContext, tableName string) (int, error) {
+	var count int
+	err := sqlx.GetContext(ctx, db, &count, fmt.Sprintf(`SELECT count(*) FROM %s`, tableName))
 	if err != nil {
 		return 0, err
 	}
-	return amount, nil
+	return count, nil
 }
 
 func amountActiveUsersSinceDB(ctx context.Context, db sqlx.QueryerContext, since time.Time) (int, error) {

@@ -2,11 +2,7 @@ import React, { useMemo, useState } from "react";
 import { Tab, Tabs, TabList, TabPanel } from "react-tabs";
 import { Row } from "react-table";
 
-import {
-  IMdmStatusCardData,
-  IMdmSolution,
-  IMdmSummaryMdmSolution,
-} from "interfaces/mdm";
+import { IMdmStatusCardData, IMdmSummaryMdmSolution } from "interfaces/mdm";
 
 import TabsWrapper from "components/TabsWrapper";
 import TableContainer from "components/TableContainer";
@@ -57,9 +53,9 @@ const EmptyMdmStatus = (): JSX.Element => (
       <>
         To see MDM versions, deploy&nbsp;
         <CustomLink
-          url="https://fleetdm.com/docs/using-fleet/adding-hosts#osquery-installer"
+          url="https://fleetdm.com/learn-more-about/fleetd"
           newTab
-          text="Fleet's osquery installer"
+          text="Fleet's agent (fleetd)"
         />
       </>
     }

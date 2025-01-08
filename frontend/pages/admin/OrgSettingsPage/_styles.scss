@@ -58,22 +58,6 @@
           em {
             font-style: normal;
           }
-
-          &--configured {
-            em {
-              color: $ui-success;
-            }
-          }
-
-          &--notconfigured {
-            em {
-              color: $ui-error;
-            }
-          }
-        }
-        .button--inverse {
-          // compensate for button's padding
-          margin-left: -$pad-small;
         }
       }
 
@@ -96,10 +80,6 @@
       &__yaml {
         width: calc(90% - 50px);
         margin-bottom: $pad-medium;
-      }
-
-      &__disabled-usage-statistics-checkbox {
-        @include disabled;
       }
     }
   }

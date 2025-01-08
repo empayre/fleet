@@ -25,6 +25,14 @@ $max-width: 2560px;
   }
 }
 
+// Used to normalize styling of team header wrapper on various pages
+@mixin normalize-team-header {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  justify-content: space-between;
+}
+
 //  Used to keep the settings description sticky under the main nav and sub nav.
 // TODO: figure out how to calculate these values with variables. Will be tedious to change otherwise
 @mixin sticky-settings-description {
@@ -132,6 +140,9 @@ $max-width: 2560px;
   font-size: $xx-small;
   font-weight: $regular;
   @include grey-text;
+  .custom-link {
+    font-size: inherit;
+  }
 }
 
 @mixin link {
@@ -144,6 +155,7 @@ $max-width: 2560px;
     outline-offset: 3px;
     outline-style: solid;
     outline-width: 2px;
+    border-radius: 2px;
   }
 }
 
@@ -180,6 +192,13 @@ $max-width: 2560px;
       }
     }
   }
+}
+
+@mixin ellipse-text($width: auto) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: $width;
 }
 
 @mixin copy-message {
@@ -283,6 +302,13 @@ $max-width: 2560px;
 
       .Select-input {
         height: auto;
+
+        // When tabbing
+        &:focus-visible {
+          outline: 2px solid $ui-vibrant-blue-25;
+          outline-offset: 1px;
+          border-radius: 4px;
+        }
       }
 
       .Select-arrow-zone {
@@ -333,5 +359,25 @@ $max-width: 2560px;
         transform: rotate(180deg);
       }
     }
+  }
+}
+
+@mixin tooltip5-arrow-styles {
+  // arrow styles directly from react-tooltip-5 css
+  .react-tooltip-arrow {
+    width: 8px;
+    height: 8px;
+  }
+  [class*="react-tooltip__place-top"] > .styles-module_arrow__K0L3T {
+    transform: rotate(45deg);
+  }
+  [class*="react-tooltip__place-right"] > .styles-module_arrow__K0L3T {
+    transform: rotate(135deg);
+  }
+  [class*="react-tooltip__place-bottom"] > .styles-module_arrow__K0L3T {
+    transform: rotate(225deg);
+  }
+  [class*="react-tooltip__place-left"] > .styles-module_arrow__K0L3T {
+    transform: rotate(315deg);
   }
 }

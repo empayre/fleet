@@ -1,5 +1,98 @@
 ---
 apiVersion: v1
+kind: policy
+spec:
+  name: Ensure a password is required to wake the computer from sleep or screen saver is enabled
+  platforms: macOS
+  platform: darwin
+  description: Checks that password is required to wake the computer from sleep or screen saver is enabled.
+  resolution: |
+    Automated method:
+    Ask your system administrator to deploy an MDM profile that ensures a password is required to wake the computer from sleep or screen saver is enabled.
+    Graphical method:
+      Perform the following steps to ensure a password is required to wake the computer from sleep or screen saver is enabled:
+        1. Open System Settings
+        2. Select Lock Screen
+        3. Verify that "Require password after screensaver begins or display is turned
+        off" is set with "After 0 seconds" or "After 5 seconds"
+  query: |-
+    SELECT 1 WHERE 
+      EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.screensaver' AND 
+            name='askForPassword' AND 
+            (value = 1 OR value = 'true') AND 
+            username = ''
+        )
+      AND EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.screensaver' AND 
+            name='askForPasswordDelay' AND 
+            value <= 5 AND 
+            username = ''
+        )
+      AND NOT EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.screensaver' AND 
+            name='askForPassword' AND 
+            (value != 1 AND value != 'true')
+        )
+      AND NOT EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.screensaver' AND 
+            name='askForPasswordDelay' AND 
+            value > 5
+        );  
+  purpose: Informational
+  tags: compliance, CIS, CIS_Level1, premium,
+  contributors: sharon-fdm
+---
+apiVersion: v1
+kind: policy
+spec:
+  name: Ensure auto-update is enabled
+  platforms: macOS
+  platform: darwin
+  description: Checks that the system is configured via MDM to automatically install updates.
+  resolution: "Ask your system administrator to deploy an MDM profile that enables automatic updates."
+  query: |
+    SELECT 1 WHERE 
+      EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.SoftwareUpdate' AND 
+            name='AutomaticCheckEnabled' AND 
+            (value = 1 OR value = 'true') AND 
+            username = ''
+        )
+      AND NOT EXISTS (
+        SELECT 1 FROM managed_policies WHERE 
+            domain='com.apple.SoftwareUpdate' AND 
+            name='AutomaticCheckEnabled' AND 
+            (value != 1 AND value != 'true')
+        );  
+  purpose: Informational
+  tags: compliance, CIS, CIS_Level1, premium
+  contributors: sharon-fdm
+---
+apiVersion: v1
+kind: policy
+spec:
+  name: Ensure 'Minimum password length' is set to '14 or more characters'
+  platforms: win10
+  platform: windows
+  description: |
+    This policy setting determines the least number of characters that make up a password for a user account.
+  resolution: |
+    Automatic method:
+    Ask your system administrator to establish the recommended configuration via GP, set the following UI path to 14 or more characters
+    'Computer Configuration\Policies\Windows Settings\Security Settings\Account Policies\Password Policy\Minimum password length'
+  query: |
+    SELECT 1 FROM security_profile_info WHERE minimum_password_length >= 14;
+  purpose: Informational
+  tags: compliance, CIS, CIS_Level1, premium
+  contributors: marcosd4h
+---
+apiVersion: v1
 kind: query
 spec:
   name: Get OpenSSL versions
@@ -514,12 +607,12 @@ apiVersion: v1
 kind: policy
 spec:
   name: Full disk encryption enabled (Linux)
-  query: SELECT 1 FROM disk_encryption WHERE encrypted=1 AND name LIKE '/dev/dm-1';
+  query: SELECT 1 FROM mounts m, disk_encryption d WHERE m.device_alias = d.name AND d.encrypted = 1 AND m.path = '/';
   description: Checks if the root drive is encrypted. There are many ways to encrypt Linux systems. This is the default on distributions such as Ubuntu.
   resolution: "Ensure the image deployed to your Linux workstation includes full disk encryption."
   platform: linux
   tags: compliance, hardening, built-in, critical
-  contributors: GuillaumeRoss
+  contributors: jbilling,GuillaumeRoss
 ---
 apiVersion: v1
 kind: policy
@@ -879,9 +972,9 @@ spec:
 apiVersion: v1
 kind: policy
 spec:
-  name: No 1Password emergency kit stored on desktop or in downloads (macOS)
-  query: SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM file WHERE filename LIKE '%Emergency Kit%.pdf' AND (path LIKE '/Users/%%/Desktop/%%' OR path LIKE '/Users/%%/Documents/%%' OR path LIKE '/Users/%%/Downloads/%%' OR path LIKE '/Users/Shared'));
-  description: "Looks for PDF files with file names typically used by 1Password for emergency recovery kits."
+  name: No 1Password emergency kit stored in desktop, documents, or downloads folders (macOS)
+  query: SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM file WHERE filename LIKE '%Emergency Kit%.pdf' AND (path LIKE '/Users/%/Desktop/%' OR path LIKE '/Users/%/Documents/%' OR path LIKE '/Users/%/Downloads/%' OR path LIKE '/Users/Shared/%'));
+  description: "Looks for PDF files with file names typically used by 1Password for emergency recovery kits. To protect the performance of your devices, the search is one level deep and limited to the Desktop, Documents, Downloads, and Shared folders."
   resolution: "Delete 1Password emergency kits from your computer, and empty the trash. 1Password emergency kits should only be printed and stored in a physically secure location."
   platform: darwin
   tags: compliance, built-in
@@ -1006,12 +1099,11 @@ spec:
   contributors: defensivedepth
 ---
 apiVersion: v1
-kind: policy
+kind: query
 spec:
   name: Identify Apple development secrets (macOS)
   query: SELECT * FROM keychain_items WHERE label LIKE '%ABCDEFG%';
   description: "Identifies certificates associated with Apple development signing and notarization. Replace ABCDEFG with your company's identifier."
-  resolution: "Ensure your official Apple builds, signing and notarization happen on a centralized system, and remove these certificates from workstations."
   tags: compliance, inventory, built-in
   platform: darwin
   contributors: GuillaumeRoss

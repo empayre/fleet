@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -27,6 +28,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/theupdateframework/go-tuf/client"
 	"github.com/theupdateframework/go-tuf/data"
+	"github.com/theupdateframework/go-tuf/verify"
 )
 
 const (
@@ -206,8 +208,28 @@ func (u *Updater) UpdateMetadata() error {
 	return nil
 }
 
+func IsExpiredErr(err error) bool {
+	var errDecodeFailed client.ErrDecodeFailed
+	if errors.As(err, &errDecodeFailed) {
+		err = errDecodeFailed.Err
+	}
+	var errExpired verify.ErrExpired
+	return errors.As(err, &errExpired)
+}
+
+// SignaturesExpired returns true if the "root", "targets", or "snapshot" signature is expired.
+func (u *Updater) SignaturesExpired() bool {
+	// When the "root", "targets", or "snapshot" signature is expired
+	// client.Target fails with an expiration error.
+	_, err := u.Lookup(constant.OrbitTUFTargetName)
+	return IsExpiredErr(err)
+}
+
 // repoPath returns the path of the target in the remote repository.
 func (u *Updater) repoPath(target string) (string, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	t, ok := u.opt.Targets[target]
 	if !ok {
 		return "", fmt.Errorf("unknown target: %s", target)
@@ -221,7 +243,26 @@ func (u *Updater) ExecutableLocalPath(target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ok, err := entryExists(localTarget.ExecPath)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("path %q does not exist", localTarget.ExecPath)
+	}
 	return localTarget.ExecPath, nil
+}
+
+// entryExists returns whether a file or directory at path exists.
+func entryExists(path string) (bool, error) {
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // DirLocalPath returns the configured root directory local path of a tar.gz target.
@@ -231,6 +272,13 @@ func (u *Updater) DirLocalPath(target string) (string, error) {
 	localTarget, err := u.localTarget(target)
 	if err != nil {
 		return "", err
+	}
+	ok, err := entryExists(localTarget.DirPath)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("path %q does not exist", localTarget.DirPath)
 	}
 	return localTarget.DirPath, nil
 }
@@ -281,6 +329,9 @@ type LocalTarget struct {
 
 // localTarget returns the info and local path of a target.
 func (u *Updater) localTarget(target string) (*LocalTarget, error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	t, ok := u.opt.Targets[target]
 	if !ok {
 		return nil, fmt.Errorf("unknown target: %s", target)
@@ -384,6 +435,11 @@ func (u *Updater) get(target string) (*LocalTarget, error) {
 					return nil, fmt.Errorf("failed to remove old extracted dir: %q: %w", localTarget.DirPath, err)
 				}
 			}
+			if strings.HasSuffix(localTarget.Path, ".pkg") && runtime.GOOS == "darwin" {
+				if err := installPKG(localTarget.Path); err != nil {
+					return nil, fmt.Errorf("updating pkg: %w", err)
+				}
+			}
 		} else {
 			log.Debug().Str("path", localTarget.Path).Str("target", target).Msg("found expected target locally")
 		}
@@ -391,6 +447,11 @@ func (u *Updater) get(target string) (*LocalTarget, error) {
 		log.Debug().Err(err).Msg("stat file")
 		if err := u.download(target, repoPath, localTarget.Path, localTarget.Info.CustomCheckExec); err != nil {
 			return nil, fmt.Errorf("download %q: %w", repoPath, err)
+		}
+		if strings.HasSuffix(localTarget.Path, ".pkg") && runtime.GOOS == "darwin" {
+			if err := installPKG(localTarget.Path); err != nil {
+				return nil, fmt.Errorf("installing pkg for the first time: %w", err)
+			}
 		}
 	default:
 		return nil, fmt.Errorf("stat %q: %w", localTarget.Path, err)
@@ -493,8 +554,25 @@ func goosFromPlatform(platform string) (string, error) {
 		return "darwin", nil
 	case "windows", "linux":
 		return platform, nil
+	case "linux-arm64":
+		return "linux", nil
 	default:
 		return "", fmt.Errorf("unknown platform: %s", platform)
+	}
+}
+
+func goarchFromPlatform(platform string) ([]string, error) {
+	switch platform {
+	case "macos", "macos-app":
+		return []string{"amd64", "arm64"}, nil
+	case "windows":
+		return []string{"amd64"}, nil
+	case "linux":
+		return []string{"amd64"}, nil
+	case "linux-arm64":
+		return []string{"arm64"}, nil
+	default:
+		return nil, fmt.Errorf("unknown platform: %s", platform)
 	}
 }
 
@@ -515,6 +593,23 @@ func (u *Updater) checkExec(target, tmpPath string, customCheckExec func(execPat
 		return nil
 	}
 
+	platformGOARCH, err := goarchFromPlatform(localTarget.Info.Platform)
+	if err != nil {
+		return err
+	}
+	var containsArch bool
+	for _, arch := range platformGOARCH {
+		if arch == runtime.GOARCH {
+			containsArch = true
+		}
+	}
+	if !containsArch && strings.HasSuffix(os.Args[0], "fleetctl") {
+		// Nothing to do, we can't reliably execute a
+		// cross-architecture binary. This happens when cross-building
+		// packages
+		return nil
+	}
+
 	if strings.HasSuffix(tmpPath, ".tar.gz") {
 		if err := extractTarGz(tmpPath); err != nil {
 			return fmt.Errorf("extract %q: %w", tmpPath, err)
@@ -522,6 +617,14 @@ func (u *Updater) checkExec(target, tmpPath string, customCheckExec func(execPat
 		tmpDirPath := filepath.Join(filepath.Dir(tmpPath), localTarget.Info.ExtractedExecSubPath[0])
 		defer os.RemoveAll(tmpDirPath)
 		tmpPath = filepath.Join(append([]string{filepath.Dir(tmpPath)}, localTarget.Info.ExtractedExecSubPath...)...)
+	}
+
+	if strings.HasSuffix(tmpPath, ".pkg") && runtime.GOOS == "darwin" {
+		cmd := exec.Command("pkgutil", "--payload-files", tmpPath)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("running pkgutil to verify %s: %s: %w", tmpPath, string(out), err)
+		}
+		return nil
 	}
 
 	if customCheckExec != nil {
@@ -599,6 +702,14 @@ func extractTarGz(path string) error {
 	}
 }
 
+func installPKG(path string) error {
+	cmd := exec.Command("installer", "-pkg", path, "-target", "/")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("running pkgutil to install %s: %s: %w", path, string(out), err)
+	}
+	return nil
+}
+
 func (u *Updater) initializeDirectories() error {
 	for _, dir := range []string{
 		filepath.Join(u.opt.RootDirectory, binDir),
@@ -610,4 +721,18 @@ func (u *Updater) initializeDirectories() error {
 	}
 
 	return nil
+}
+
+func CanRun(rootDirPath, targetName string, targetInfo TargetInfo) bool {
+	_, binaryPath, _ := LocalTargetPaths(
+		rootDirPath,
+		targetName,
+		targetInfo,
+	)
+
+	if _, err := os.Stat(binaryPath); err != nil {
+		return false
+	}
+
+	return true
 }

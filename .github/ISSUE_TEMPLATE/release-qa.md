@@ -3,7 +3,7 @@ name:  Release QA
 about: Checklist of required tests prior to release
 title: 'Release QA:'
 labels: '#g-mdm,#g-endpoint-ops,:release'
-assignees: 'xpkoala,sabrinabuckets'
+assignees: 'xpkoala,pezhub,jmwatts'
 
 ---
 
@@ -94,42 +94,78 @@ Smoke tests are limited to core functionality and serve as a pre-release final r
 
 <tr><td>MDM enrollment flow</td><td>Verify MDM enrollments, run MDM commands</td><td>
   
-1. Erase an ADE-eligible macOS host and verify able to complete auomated enrollment flow.
+1. Erase an ADE-eligible macOS host and verify able to complete automated enrollment flow.
 2. With Windows MDM turned On, enroll a Windows host and verify MDM is turned On for the host.
 3. Verify able to run MDM commands on both macOS and Windows hosts from the CLI.
+</td><td>pass/fail</td></tr>
+
+<tr><td>MDM migration flow</td><td>Verify MDM migration for ADE and non-ADE hosts</td><td>
+  
+1. Turn off MDM on an ADE-eligible macOS host and verify that the native, "Device Enrollment" macOS notification appears.
+2. On the My device page, follow the "Turn on MDM" instructions and verify that MDM is turned on.
+3. Turn off MDM on a non ADE-eligible macOS host.
+4. On the My device page, follow the "Turn on MDM" instructions and verify that MDM is turned on.
 </td><td>pass/fail</td></tr>
 
 <tr><td>Scripts</td><td>Verify script library and execution</td><td>
 
 1. Verify able to run a script on all host types from CLI.
 2. Verify scripts library upload/download/delete.
-3. From Host details (Windows and macOS) run a script that should PASS, verify.
-4. From Host details (Windows and macOS) run a script that should FAIL, verify.
+3. From Host details (macOS, Windows, & Linux) run a script that should PASS, verify.
+4. From Host details (macOS, Windows, & Linux) run a script that should FAIL, verify.
 5. Verify UI loading state and statuses for scripts.
 6. Disable scripts globally and verify unable to run.
 7. Verify scripts display correctly in Activity feed.
 </td><td>pass/fail</td></tr>
 
+<tr><td>Software</td><td>Verify software library and install / download</td><td>
+
+1. Verify software library upload/download/delete.
+2. From Host details (macOS, Windows, & Linux) run an install that should PASS, verify.
+3. From My Device (macOS, Windows, & Linux) software tab should have self-service items available, verify.
+4. Verify UI loading state and statuses for installing software.
+6. Verify software installs display correctly in Activity feed.
+</td><td>pass/fail</td></tr>
+
 <tr><td>OS settings</td><td>Verify OS settings functionality</td><td>
 
-1. Verify able to configure Disk encryption.
+1. Verify able to configure Disk encryption (macOS, Windows, & Linux).
 2. Verify host enrolled with Disk encryption enforced successfully encrypts.
 3. Verify Profiles upload/download/delete (macOS & Windows).
-4. Verify profiles are delivered to host and applied. 
+4. Verify Profiles are delivered to host and applied. 
 </td><td>pass/fail</td></tr>
 
 <tr><td>Setup experience</td><td>Verify macOS Setup experience</td><td>
 
 1. Configure End user authentication.
-2. Upload a Boostrap package.
-3. Enroll an ADE-eligible macOS host and verify successful authentication.
-4. Verify Boostrap package is delivered.
+2. Upload a Bootstrap package.
+3. Add software (FMA, VPP, & Custom pkg)
+4. Add a script
+5. Enroll an ADE-eligible macOS host and verify successful authentication.
+6. Verify Bootstrap package is delivered.
+7. Verify SwiftDialogue window displays.
+8. Verify software installs and script runs.
 </td><td>pass/fail</td></tr>
 
 <tr><td>OS updates</td><td>Verify OS updates flow</td><td>
 
 1. Configure OS updates (macOS & Windows).
-2. Verify on-device that Nudge prompt appears (macOS). 
+2. Verify on-device that Nudge prompt appears (macOS 13).
+3. Verify enforce minimumOS occurs during enrollment (macOS 14+).
+</td><td>pass/fail</td></tr>
+
+<tr><td>iOS/iPadOS</td><td>Verify enrollment, profiles, & software installs</td><td>
+
+1. Verify ADE enrollment.
+2. Verify OTA enrollment.
+3. Verify Profiles are delivered to host and applied.
+4. Verify VPP apps install & display correctly in Activity feed.
+ 
+<tr><td>Certificates Upload</td><td>APNs cert and ABM token renewal workflow</td><td>
+
+1. Renew APNs Certificate.
+2. Renew ABM Token.
+3. Ensure ADE hosts can enroll.
 </td><td>pass/fail</td></tr>
 
 <tr><td>Migration Test</td><td>Verify Fleet can migrate to the next version with no issues.</td><td>
@@ -138,16 +174,11 @@ Using the migration scripts located in fleet/test/upgrade/
 1. Run the upgrade_test.go script using the most recent stable version of Fleet and `main`.
 2. Upgrade test returns an 'OK' response.
 </td><td>pass/fail</td></tr>
-
-<tr><td>Migration Test with Percona XtraDB MySQL Server</td><td>Verify Fleet can migrate to the next version without issues when using a specific version of Percona XtraDB Server.</td><td>
-
-Run the instructions in [tools/percona/test/README.md](../../tools/percona/test/README.md)
-</td><td>pass/fail</td></tr>
   
 <tr><td>Release blockers</td><td>Verify there are no outstanding release blocking tickets.</td><td>
   
 1. Check [this](https://github.com/fleetdm/fleet/labels/~release%20blocker) filter to view all open `~release blocker` tickets.
-2. If any are found raise an alarm in the `#help-engineering` and `#help-product-design` channels.
+2. If any are found raise an alarm in the `#help-engineering` and `#g-mdm` (or `#g-endpoint-ops`)  channels.
 </td><td>pass/fail</td></tr>
 </table>
 

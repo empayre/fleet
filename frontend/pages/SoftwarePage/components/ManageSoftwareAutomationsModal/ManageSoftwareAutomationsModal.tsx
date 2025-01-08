@@ -16,6 +16,7 @@ import {
   CONFIG_DEFAULT_RECENT_VULNERABILITY_MAX_AGE_IN_DAYS,
 } from "interfaces/config";
 import configAPI from "services/entities/config";
+import { SUPPORT_LINK } from "utilities/constants";
 
 import ReactTooltip from "react-tooltip";
 // @ts-ignore
@@ -365,6 +366,7 @@ const ManageAutomationsModal = ({
             <Link
               to={PATHS.ADMIN_INTEGRATIONS}
               className={`${baseClass}__add-integration-link`}
+              tabIndex={softwareAutomationsEnabled ? 0 : -1}
             >
               Add integration
             </Link>
@@ -406,11 +408,13 @@ const ManageAutomationsModal = ({
           }
           placeholder="https://server.com/example"
           tooltip="Provide a URL to deliver a webhook request to."
+          disabled={!softwareAutomationsEnabled}
         />
         <Button
           type="button"
           variant="text-link"
           onClick={togglePreviewPayloadModal}
+          disabled={!softwareAutomationsEnabled}
         >
           Preview payload
         </Button>
@@ -460,8 +464,9 @@ const ManageAutomationsModal = ({
               id="ticket-radio-btn"
               checked={integrationEnabled}
               value="ticket"
-              name="ticket"
+              name="workflow-type"
               onChange={onRadioChange(true)}
+              disabled={!softwareAutomationsEnabled}
             />
             <Radio
               className={`${baseClass}__radio-input`}
@@ -469,8 +474,9 @@ const ManageAutomationsModal = ({
               id="webhook-radio-btn"
               checked={!integrationEnabled}
               value="webhook"
-              name="webhook"
+              name="workflow-type"
               onChange={onRadioChange(false)}
+              disabled={!softwareAutomationsEnabled}
             />
           </div>
           {integrationEnabled ? renderTicket() : renderWebhook()}
@@ -478,9 +484,10 @@ const ManageAutomationsModal = ({
             Vulnerability automations currently run for software
             vulnerabilities. Interested in automations for OS vulnerabilities?{" "}
             <CustomLink
-              url="https://www.fleetdm.com/support"
+              url={SUPPORT_LINK}
               text="Let us know"
               newTab
+              disableKeyboardNavigation={!softwareAutomationsEnabled}
             />
           </p>
         </div>

@@ -15,26 +15,54 @@ import Button from "components/buttons/Button";
 import Spinner from "components/Spinner";
 // @ts-ignore
 import FleetIcon from "components/icons/FleetIcon";
+
+import { AppInstallDetailsModal } from "components/ActivityDetails/InstallDetails/AppInstallDetails";
+import { SoftwareInstallDetailsModal } from "components/ActivityDetails/InstallDetails/SoftwareInstallDetails/SoftwareInstallDetails";
+import SoftwareUninstallDetailsModal from "components/ActivityDetails/InstallDetails/SoftwareUninstallDetailsModal/SoftwareUninstallDetailsModal";
+
 import ActivityItem from "./ActivityItem";
-import ScriptDetailsModal from "./components/ScriptDetailsModal/ScriptDetailsModal";
+import ActivityAutomationDetailsModal from "./components/ActivityAutomationDetailsModal";
+import RunScriptDetailsModal from "./components/RunScriptDetailsModal/RunScriptDetailsModal";
+import SoftwareDetailsModal from "./components/SoftwareDetailsModal";
 
 const baseClass = "activity-feed";
 interface IActvityCardProps {
   setShowActivityFeedTitle: (showActivityFeedTitle: boolean) => void;
+  setRefetchActivities: (refetch: () => void) => void;
   isPremiumTier: boolean;
-  isSandboxMode?: boolean;
 }
 
 const DEFAULT_PAGE_SIZE = 8;
 
 const ActivityFeed = ({
   setShowActivityFeedTitle,
+  setRefetchActivities,
   isPremiumTier,
-  isSandboxMode = false,
 }: IActvityCardProps): JSX.Element => {
   const [pageIndex, setPageIndex] = useState(0);
   const [showShowQueryModal, setShowShowQueryModal] = useState(false);
   const [showScriptDetailsModal, setShowScriptDetailsModal] = useState(false);
+  const [
+    packageInstallDetails,
+    setPackageInstallDetails,
+  ] = useState<IActivityDetails | null>(null);
+  const [
+    packageUninstallDetails,
+    setPackageUninstallDetails,
+  ] = useState<IActivityDetails | null>(null);
+  const [
+    appInstallDetails,
+    setAppInstallDetails,
+  ] = useState<IActivityDetails | null>(null);
+  const [
+    activityAutomationDetails,
+    setActivityAutomationDetails,
+  ] = useState<IActivityDetails | null>(null);
+  const [
+    softwareDetails,
+    setSoftwareDetails,
+  ] = useState<IActivityDetails | null>(null);
+
   const queryShown = useRef("");
   const queryImpact = useRef<string | undefined>(undefined);
   const scriptExecutionId = useRef("");
@@ -43,6 +71,7 @@ const ActivityFeed = ({
     data: activitiesData,
     error: errorActivities,
     isFetching: isFetchingActivities,
+    refetch,
   } = useQuery<
     IActivitiesResponse,
     Error,
@@ -69,6 +98,8 @@ const ActivityFeed = ({
     }
   );
 
+  setRefetchActivities(refetch);
+
   const onLoadPrevious = () => {
     setPageIndex(pageIndex - 1);
   };
@@ -92,6 +123,24 @@ const ActivityFeed = ({
       case ActivityType.RanScript:
         scriptExecutionId.current = details.script_execution_id ?? "";
         setShowScriptDetailsModal(true);
+        break;
+      case ActivityType.InstalledSoftware:
+        setPackageInstallDetails({ ...details });
+        break;
+      case ActivityType.UninstalledSoftware:
+        setPackageUninstallDetails({ ...details });
+        break;
+      case ActivityType.InstalledAppStoreApp:
+        setAppInstallDetails({ ...details });
+        break;
+      case ActivityType.EnabledActivityAutomations:
+      case ActivityType.EditedActivityAutomations:
+        setActivityAutomationDetails({ ...details });
+        break;
+      case ActivityType.AddedSoftware:
+      case ActivityType.EditedSoftware:
+      case ActivityType.DeletedSoftware:
+        setSoftwareDetails({ ...details });
         break;
       default:
         break;
@@ -138,7 +187,6 @@ const ActivityFeed = ({
               <ActivityItem
                 activity={activity}
                 isPremiumTier={isPremiumTier}
-                isSandboxMode={isSandboxMode}
                 onDetailsClick={handleDetailsClick}
                 key={activity.id}
               />
@@ -179,9 +227,39 @@ const ActivityFeed = ({
         />
       )}
       {showScriptDetailsModal && (
-        <ScriptDetailsModal
+        <RunScriptDetailsModal
           scriptExecutionId={scriptExecutionId.current}
           onCancel={() => setShowScriptDetailsModal(false)}
+        />
+      )}
+      {packageInstallDetails && (
+        <SoftwareInstallDetailsModal
+          details={packageInstallDetails}
+          onCancel={() => setPackageInstallDetails(null)}
+        />
+      )}
+      {packageUninstallDetails && (
+        <SoftwareUninstallDetailsModal
+          details={packageUninstallDetails}
+          onCancel={() => setPackageUninstallDetails(null)}
+        />
+      )}
+      {appInstallDetails && (
+        <AppInstallDetailsModal
+          details={appInstallDetails}
+          onCancel={() => setAppInstallDetails(null)}
+        />
+      )}
+      {activityAutomationDetails && (
+        <ActivityAutomationDetailsModal
+          details={activityAutomationDetails}
+          onCancel={() => setActivityAutomationDetails(null)}
+        />
+      )}
+      {softwareDetails && (
+        <SoftwareDetailsModal
+          details={softwareDetails}
+          onCancel={() => setSoftwareDetails(null)}
         />
       )}
     </div>

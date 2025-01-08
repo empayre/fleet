@@ -1,15 +1,11 @@
 import DefaultColumnFilter from "components/TableContainer/DataTable/DefaultColumnFilter";
 import HeaderCell from "components/TableContainer/DataTable/HeaderCell";
-import {
-  IHeaderProps,
-  IStringCellProps,
-  IWebSocketData,
-} from "interfaces/datatable_config";
+import { IHeaderProps, IWebSocketData } from "interfaces/datatable_config";
 import React from "react";
 
 import { CellProps, Column } from "react-table";
 import {
-  getUniqueColumnNamesFromRows,
+  getUniqueColsAreNumTypeFromRows,
   humanHostLastSeen,
   internallyTruncateText,
 } from "utilities/helpers";
@@ -18,10 +14,12 @@ type IHQRTTableColumn = Column<IWebSocketData>;
 type ITableHeaderProps = IHeaderProps<IWebSocketData>;
 type ITableStringCellProps = CellProps<IWebSocketData, string | unknown>;
 
-const generateColumnConfigs = (rows: IWebSocketData[]): IHQRTTableColumn[] =>
-  // casting necessary because of loose typing of below method
-  // see note there for more details
-  getUniqueColumnNamesFromRows(rows).map<IHQRTTableColumn>((colName) => {
+const generateColumnConfigs = (rows: IWebSocketData[]): IHQRTTableColumn[] => {
+  const colsAreNumTypes = getUniqueColsAreNumTypeFromRows(rows) as Map<
+    string,
+    boolean
+  >;
+  return Array.from(colsAreNumTypes.keys()).map<IHQRTTableColumn>((colName) => {
     return {
       id: colName,
       Header: (headerProps: ITableHeaderProps) => (
@@ -35,7 +33,7 @@ const generateColumnConfigs = (rows: IWebSocketData[]): IHQRTTableColumn[] =>
           isSortedDesc={headerProps.column.isSortedDesc}
         />
       ),
-      accessor: colName,
+      accessor: (data) => data[colName],
       Cell: (cellProps: ITableStringCellProps) => {
         if (typeof cellProps?.cell?.value !== "string") return null;
 
@@ -45,9 +43,11 @@ const generateColumnConfigs = (rows: IWebSocketData[]): IHQRTTableColumn[] =>
         }
         // truncate columns longer than 300 characters
         const val = cellProps?.cell?.value;
-        return !!val?.length && val.length > 300
-          ? internallyTruncateText(val)
-          : <>val</> ?? null;
+        return !!val?.length && val.length > 300 ? (
+          internallyTruncateText(val)
+        ) : (
+          <>{val}</>
+        );
       },
       Filter: DefaultColumnFilter, // Component hides filter for last_fetched
       filterType: "text",
@@ -55,5 +55,6 @@ const generateColumnConfigs = (rows: IWebSocketData[]): IHQRTTableColumn[] =>
       sortType: "caseInsensitive",
     };
   });
+};
 
 export default generateColumnConfigs;

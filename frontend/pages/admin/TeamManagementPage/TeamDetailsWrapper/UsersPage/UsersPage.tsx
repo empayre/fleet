@@ -13,15 +13,16 @@ import PATHS from "router/paths";
 import usersAPI from "services/entities/users";
 import inviteAPI from "services/entities/invites";
 import teamsAPI, { ILoadTeamsResponse } from "services/entities/teams";
-import { DEFAULT_CREATE_USER_ERRORS } from "utilities/constants";
+import { DEFAULT_USER_FORM_ERRORS } from "utilities/constants";
 
 import TableContainer from "components/TableContainer";
 import TableDataError from "components/DataError";
 import Spinner from "components/Spinner";
-import CreateUserModal from "pages/admin/UserManagementPage/components/CreateUserModal";
+import TableCount from "components/TableContainer/TableCount";
+import AddUserModal from "pages/admin/UserManagementPage/components/AddUserModal";
 import EditUserModal from "../../../UserManagementPage/components/EditUserModal";
 import {
-  IFormData,
+  IUserFormData,
   NewUserType,
 } from "../../../UserManagementPage/components/UserForm/UserForm";
 import userManagementHelpers from "../../../UserManagementPage/helpers";
@@ -68,11 +69,11 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
   const [isUpdatingUsers, setIsUpdatingUsers] = useState(false);
   const [userEditing, setUserEditing] = useState<IUser>();
   const [searchString, setSearchString] = useState("");
-  const [createUserErrors, setCreateUserErrors] = useState<IUserFormErrors>(
-    DEFAULT_CREATE_USER_ERRORS
+  const [addUserErrors, setAddUserErrors] = useState<IUserFormErrors>(
+    DEFAULT_USER_FORM_ERRORS
   );
   const [editUserErrors, setEditUserErrors] = useState<IUserFormErrors>(
-    DEFAULT_CREATE_USER_ERRORS
+    DEFAULT_USER_FORM_ERRORS
   );
 
   const toggleAddUserModal = useCallback(() => {
@@ -128,7 +129,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
     (user?: IUser) => {
       setShowEditUserModal(!showEditUserModal);
       user ? setUserEditing(user) : setUserEditing(undefined);
-      setEditUserErrors(DEFAULT_CREATE_USER_ERRORS);
+      setEditUserErrors(DEFAULT_USER_FORM_ERRORS);
     },
     [showEditUserModal, setShowEditUserModal, setUserEditing]
   );
@@ -203,7 +204,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
     ]
   );
 
-  const onCreateUserSubmit = (formData: IFormData) => {
+  const onCreateUserSubmit = (formData: IUserFormData) => {
     setIsUpdatingUsers(true);
 
     if (formData.newUserType === NewUserType.AdminInvited) {
@@ -233,14 +234,14 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
               "a user with this account already exists"
             )
           ) {
-            setCreateUserErrors({
+            setAddUserErrors({
               email: "A user with this email address already exists",
             });
           } else if (
             userErrors.data.errors?.[0].reason.includes("Invite") &&
             userErrors.data.errors?.[0].reason.includes("already exists")
           ) {
-            setCreateUserErrors({
+            setAddUserErrors({
               email: "A user with this email address has already been invited",
             });
           } else {
@@ -265,19 +266,19 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
         })
         .catch((userErrors: { data: IApiError }) => {
           if (userErrors.data.errors?.[0].reason.includes("Duplicate")) {
-            setCreateUserErrors({
+            setAddUserErrors({
               email: "A user with this email address already exists",
             });
           } else if (
             userErrors.data.errors?.[0].reason.includes("already invited")
           ) {
-            setCreateUserErrors({
+            setAddUserErrors({
               email: "A user with this email address has already been invited",
             });
           } else if (
             userErrors.data.errors?.[0].reason.includes("password too long")
           ) {
-            setCreateUserErrors({
+            setAddUserErrors({
               password: "Password is over the character limit.",
             });
           } else {
@@ -291,7 +292,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
   };
 
   const onEditUserSubmit = useCallback(
-    (formData: IFormData) => {
+    (formData: IUserFormData) => {
       const updatedAttrs: IUpdateUserFormData = userManagementHelpers.generateUpdateData(
         userEditing as IUser,
         formData
@@ -369,6 +370,14 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
     [toggleEditUserModal, toggleRemoveUserModal]
   );
 
+  const renderUsersCount = useCallback(() => {
+    if (teamUsers?.length === 0 && searchString === "") {
+      return <></>;
+    }
+
+    return <TableCount name="users" count={teamUsers?.length} />;
+  }, [teamUsers?.length]);
+
   const columnConfigs = useMemo(
     () => generateColumnConfigs(onActionSelection),
     [onActionSelection]
@@ -404,7 +413,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
           defaultSortDirection="asc"
           actionButton={{
             name: isGlobalAdmin ? "add user" : "create user",
-            buttonText: isGlobalAdmin ? "Add users" : "Create users",
+            buttonText: isGlobalAdmin ? "Add users" : "Create user",
             variant: "brand",
             onActionButtonClick: isGlobalAdmin
               ? toggleAddUserModal
@@ -426,6 +435,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
           showMarkAllPages={false}
           isAllPagesSelected={false}
           searchable={userIds.length > 0 || searchString !== ""}
+          renderCount={renderUsersCount}
         />
       )}
       {showAddUserModal && currentTeamDetails ? (
@@ -453,6 +463,7 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
           sesConfigured={sesConfigured}
           canUseSso={canUseSso}
           isSsoEnabled={userEditing?.sso_enabled}
+          isMfaEnabled={userEditing?.mfa_enabled}
           isModifiedByGlobalAdmin={isGlobalAdmin}
           currentTeam={currentTeamDetails}
           isUpdatingUsers={isUpdatingUsers}
@@ -460,12 +471,12 @@ const UsersPage = ({ location, router }: ITeamSubnavProps): JSX.Element => {
         />
       )}
       {showCreateUserModal && currentTeamDetails && (
-        <CreateUserModal
-          createUserErrors={createUserErrors}
+        <AddUserModal
+          addUserErrors={addUserErrors}
           onCancel={toggleCreateUserModal}
           onSubmit={onCreateUserSubmit}
           defaultGlobalRole={null}
-          defaultTeamRole="observer"
+          defaultTeamRole="Observer"
           defaultTeams={[
             { id: currentTeamDetails.id, name: "", role: "observer" },
           ]}

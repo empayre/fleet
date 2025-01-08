@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Masterminds/semver"
 	"github.com/fleetdm/fleet/v4/server/fleet"
 	"github.com/fleetdm/fleet/v4/server/mdm/nanomdm/mdm"
 )
@@ -36,18 +36,6 @@ func EncodeCertPEM(cert *x509.Certificate) []byte {
 	return pem.EncodeToMemory(&block)
 }
 
-func DecodeCertPEM(encoded []byte) (*x509.Certificate, error) {
-	block, _ := pem.Decode(encoded)
-	if block == nil {
-		return nil, errors.New("no PEM-encoded data found")
-	}
-	if block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("unexpected block type %s", block.Type)
-	}
-
-	return x509.ParseCertificate(block.Bytes)
-}
-
 func EncodeCertRequestPEM(cert *x509.CertificateRequest) []byte {
 	pemBlock := &pem.Block{
 		Type:    "CERTIFICATE REQUEST",
@@ -67,25 +55,12 @@ func EncodePrivateKeyPEM(key *rsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&block)
 }
 
-// DecodePrivateKeyPEM decodes PEM-encoded private key data.
-func DecodePrivateKeyPEM(encoded []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(encoded)
-	if block == nil {
-		return nil, errors.New("no PEM-encoded data found")
-	}
-	if block.Type != "RSA PRIVATE KEY" {
-		return nil, fmt.Errorf("unexpected block type %s", block.Type)
-	}
-
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
-}
-
 // GenerateRandomPin generates a `lenght`-digit PIN number that takes into
 // account the current time as described in rfc4226 (for one time passwords)
 //
 // The implementation details have been mostly taken from https://github.com/pquerna/otp
 func GenerateRandomPin(length int) string {
-	counter := uint64(time.Now().Unix())
+	counter := uint64(time.Now().Unix()) //nolint:gosec // dismiss G115
 	buf := make([]byte, 8)
 	binary.BigEndian.PutUint64(buf, counter)
 	m := sha256.New()
@@ -96,7 +71,7 @@ func GenerateRandomPin(length int) string {
 		((int(sum[offset+1] & 0xff)) << 16) |
 		((int(sum[offset+2] & 0xff)) << 8) |
 		(int(sum[offset+3]) & 0xff))
-	v := int32(value % int64(math.Pow10(length)))
+	v := int32(value % int64(math.Pow10(length))) //nolint:gosec // dismiss G115
 	f := fmt.Sprintf("%%0%dd", length)
 	return fmt.Sprintf(f, v)
 }
@@ -124,7 +99,7 @@ func FmtDDMError(reasons []fleet.MDMAppleDDMStatusErrorReason) string {
 }
 
 func EnrollURL(token string, appConfig *fleet.AppConfig) (string, error) {
-	enrollURL, err := url.Parse(appConfig.ServerSettings.ServerURL)
+	enrollURL, err := url.Parse(appConfig.MDMUrl())
 	if err != nil {
 		return "", err
 	}
@@ -133,4 +108,19 @@ func EnrollURL(token string, appConfig *fleet.AppConfig) (string, error) {
 	q.Set("token", token)
 	enrollURL.RawQuery = q.Encode()
 	return enrollURL.String(), nil
+}
+
+// IsLessThanVersion returns true if the current version is less than the target version.
+// If either version is invalid, an error is returned.
+func IsLessThanVersion(current string, target string) (bool, error) {
+	cv, err := semver.NewVersion(current)
+	if err != nil {
+		return false, fmt.Errorf("invalid current version: %w", err)
+	}
+	tv, err := semver.NewVersion(target)
+	if err != nil {
+		return false, fmt.Errorf("invalid target version: %w", err)
+	}
+
+	return cv.LessThan(tv), nil
 }
